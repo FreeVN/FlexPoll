@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlexPoll — Gezel HVAC+</title>
+<link rel="stylesheet" href="static/style.css">
+<link rel="icon" href="static/flexpoll-icon.png">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <img class="gezel" src="static/gezel-logo.png" alt="Gezel HVAC+">
+    <span class="brand-sep"></span>
+    <img class="mark" src="static/flexpoll-icon.png" alt="FlexPoll">
+    <div class="titles">
+      <h1>Flex<span>Poll</span></h1>
+      <p>Modbus &amp; BACnet Diagnostic Suite</p>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="countdown" id="countdown">
+    <b id="cd-last">wachten op meting…</b><br>
+    <span id="hostinfo">sdr-rpi</span>
+  </div>
+  <div class="pill" id="buspill"><span class="led"></span><span id="buspill-txt">Bus offline</span></div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab on" data-tab="rtu">Modbus RTU</button>
+  <button class="tab" data-tab="tcp">Modbus TCP/IP</button>
+  <button class="tab" data-tab="bacnet">BACnet/IP</button>
+  <span class="tab-note" id="tab-note">RS-485 · één framing per lijn</span>
+</nav>
+
+<div class="busbar" id="busbar">
+  <div class="field port">
+    <label for="port">USB → RS485 adapter</label>
+    <select id="port"></select>
+  </div>
+  <div class="field">
+    <label for="baud">Baudrate</label>
+    <select id="baud"></select>
+  </div>
+  <div class="field">
+    <label for="parity">Pariteit</label>
+    <select id="parity">
+      <option value="N">8N1 / 8N2 (none)</option>
+      <option value="E">8E1 (even)</option>
+      <option value="O">8O1 (odd)</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="stopbits">Stopbits</label>
+    <select id="stopbits">
+      <option value="1">1</option>
+      <option value="2">2</option>
+    </select>
+  </div>
+  <button class="btn primary" id="btn-reconnect">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
+    Verbind
+  </button>
+  <div class="grow"></div>
+  <div class="field">
+    <label>Scanbereik</label>
+    <div class="range">
+      <input type="number" id="scan-from" value="1" min="1" max="247" title="Van adres">
+      <span>–</span>
+      <input type="number" id="scan-to" value="32" min="1" max="247" title="Tot adres">
+    </div>
+  </div>
+  <button class="btn ghost" id="btn-framing" title="Zoek baudrate/pariteit/stopbits op het adres bij Scanbereik → van">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M4 12h16M4 17h7"/><circle cx="18" cy="7" r="2"/><circle cx="14" cy="17" r="2"/></svg>
+    Framing
+  </button>
+  <button class="btn ghost" id="btn-scan">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    Scan adressen
+  </button>
+</div>
+
+<div class="scanbar" id="scanbar"></div>
+
+<main class="layout">
+  <aside class="panel palette">
+    <div class="panel-head">
+      <h2>Modules</h2>
+      <span class="sub">sleep of klik</span>
+      <button class="btn small ghost" id="btn-series" title="Meerdere modules op opeenvolgende adressen toevoegen">+ reeks</button>
+    </div>
+    <div class="palette-body" id="palette">
+      <p class="palette-hint">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 9h14M5 15h14"/></svg>
+        Sleep een tegeltje naar het veld, of klik erop om toe te voegen.
+      </p>
+      <div id="palette-tiles"></div>
+    </div>
+  </aside>
+
+  <section class="panel canvas-panel">
+    <div class="canvas-head">
+      <h2>Modbus-lijn</h2>
+      <span class="hint">RS-485 · 2-draads</span>
+      <span class="badge" id="modcount">0 modules</span>
+    </div>
+    <div class="linefield" id="linefield">
+      <div class="trunk"></div>
+      <div class="trunk-label">RS-485 trunk</div>
+      <div class="linescroll" id="linescroll">
+        <div class="modules" id="modules"></div>
+        <div class="insertline" id="insertline"></div>
+      </div>
+      <div class="empty" id="empty">
+        <div class="inner">
+          <div class="ring">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="8" cy="7" r="2" fill="#fff"/><circle cx="16" cy="12" r="2" fill="#fff"/><circle cx="10" cy="17" r="2" fill="#fff"/></svg>
+          </div>
+          <h3>Sleep hier je eerste module</h3>
+          <p>Bouw je Modbus-lijn module per module op. Je lijn en adressen blijven bewaard na een reboot.</p>
+        </div>
+      </div>
+    </div>
+    <div class="logwrap" id="logwrap">
+      <div class="loghead" id="loghead">
+        <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        <h3>Buslog</h3>
+        <label class="dbg" title="Log elk Modbus-frame: functiecode, registertype en bereik">
+          <input type="checkbox" id="trace-toggle"> verkeer
+        </label>
+        <button class="iconbtn" id="btn-clear-log" title="Log wissen">✕</button>
+        <span class="badge" id="logcount" style="margin-left:auto;font-size:10px;color:#9aa5b3"></span>
+      </div>
+      <div class="logbody" id="logbody"></div>
+    </div>
+  </section>
+
+    <div class="bacnet-panel" id="bacnet-panel" hidden>
+      <div class="bn-head">
+        <div class="field"><label for="bn-subnet">Subnet-broadcast</label>
+          <input type="text" id="bn-subnet" placeholder="leeg = automatisch"></div>
+        <button class="btn primary" id="bn-scan">Toestellen zoeken</button>
+        <span class="bn-status" id="bn-status"></span>
+        <span class="bn-hint" id="bn-hint"></span>
+      </div>
+      <div class="bn-devices" id="bn-devices"></div>
+      <div class="bn-detail" id="bn-detail" hidden>
+        <div class="bn-dhead">
+          <h3 id="bn-title"></h3>
+          <div class="bn-dtools">
+            <input type="text" id="bn-project" class="bn-proj" placeholder="projectnaam" maxlength="40">
+            <button class="btn small ghost" id="bn-refresh">Verversen</button>
+            <a class="btn small" id="bn-ede" href="#" download>EDE (ZIP)</a>
+          </div>
+        </div>
+        <div class="bn-points" id="bn-points"></div>
+        <p class="bn-note">Schrijven kan op analoge uitgangen/waarden, binaire uitgangen/waarden en multi-state. Andere objecten zijn alleen lezen.</p>
+      </div>
+    </div>
+</main>
+
+<footer style="padding:0 26px 18px;font-size:10px;color:#9aa5b3;letter-spacing:.04em">
+  Gezel HVAC+ · FlexPoll — Modbus RTU · Modbus TCP/IP · BACnet/IP
+</footer>
+
+<div class="modal" id="series-modal">
+  <div class="modal-box">
+    <h3>Reeks toevoegen</h3>
+    <div class="field"><label for="series-type">Type</label><select id="series-type"></select></div>
+    <div class="field"><label for="series-from">Vanaf adres</label><input type="number" id="series-from" value="1" min="1" max="247"></div>
+    <div class="field"><label for="series-count">Aantal</label><input type="number" id="series-count" value="13" min="1" max="32"></div>
+    <p class="modal-note" id="series-note"></p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="series-cancel">Annuleer</button>
+      <button class="btn primary" id="series-ok">Toevoegen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="point-modal">
+  <div class="modal-box wide">
+    <h3>Punt toevoegen</h3>
+    <div class="pgrid">
+      <div class="field"><label for="pt-name">Naam</label><input type="text" id="pt-name" placeholder="bv. Buitenvoeler" maxlength="32"></div>
+      <div class="field"><label for="pt-unit">Eenheid</label><input type="text" id="pt-unit" placeholder="°C" maxlength="8"></div>
+      <div class="field"><label for="pt-fc">Functiecode</label>
+        <select id="pt-fc">
+          <option value="3">3 — holding register (R/W)</option>
+          <option value="4">4 — input register (R)</option>
+          <option value="1">1 — coil (R/W)</option>
+          <option value="2">2 — discrete input (R)</option>
+        </select>
+      </div>
+      <div class="field"><label for="pt-addr">Adres (0-based)</label><input type="number" id="pt-addr" value="0" min="0" max="65535"></div>
+      <div class="field"><label for="pt-type">Datatype</label>
+        <select id="pt-type">
+          <option value="u16">uint16</option>
+          <option value="s16">int16</option>
+          <option value="u32">uint32</option>
+          <option value="s32">int32</option>
+          <option value="f32">float32 (IEEE)</option>
+          <option value="bit">bit</option>
+        </select>
+      </div>
+      <div class="field"><label for="pt-order">Woordvolgorde</label>
+        <select id="pt-order">
+          <option value="AB">AB — hoog woord eerst</option>
+          <option value="BA">BA — laag woord eerst</option>
+        </select>
+      </div>
+      <div class="field"><label for="pt-scale">Schaal</label><input type="number" id="pt-scale" value="1" step="any"></div>
+      <div class="field"><label for="pt-offset">Offset</label><input type="number" id="pt-offset" value="0" step="any"></div>
+      <div class="field"><label for="pt-ctrl">Bediening</label>
+        <select id="pt-ctrl">
+          <option value="input">Invulveld + Zet</option>
+          <option value="button">Knoppen aan/uit</option>
+        </select>
+      </div>
+      <div class="field check"><label><input type="checkbox" id="pt-swap"> bytes wisselen per woord</label></div>
+      <div class="field check"><label><input type="checkbox" id="pt-rw"> schrijfbaar</label></div>
+    </div>
+    <p class="modal-note">Waarde = ruw × schaal + offset. Voorbeeld: register 0,1 °C → schaal 0,1.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="pt-cancel">Annuleer</button>
+      <button class="btn primary" id="pt-ok">Toevoegen</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script src="static/app.js"></script>
+</body>
+</html>
