@@ -61,7 +61,12 @@ python3 bacnet_slave.py            # BACnet/IP-testslave op UDP 47808
 
 ## Licentie
 
-Code: **Apache License 2.0** (zie `LICENSE`).
+Code: **GNU Affero General Public License v3.0** (`AGPL-3.0-only`, zie `LICENSE`).
+
+Let op wat dat betekent: FlexPoll wordt over het netwerk geserveerd, dus
+**§13** geldt. Wie een gewijzigde versie host en andere gebruikers laat
+interageren, moet hen de broncode van die gewijzigde versie aanbieden.
+Intern gebruik binnen één bedrijf is geen verspreiding.
 
 De namen **Gezel**, **Gezel HVAC+** en **FlexPoll**, en de bijbehorende logo's,
-vallen **niet** onder die licentie. Zie `NOTICE`.
+vallen **niet** onder die licentie (AGPL §7(e)). Zie `NOTICE`.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 Gezel HVAC+ (https://gezel.be)
 """Minimale BACnet/IP-client (Who-Is, ReadProperty, WriteProperty) — enkel stdlib.
 
 Bewust beperkt: unicast naar één toestel per keer, geen routing, geen

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 Gezel HVAC+ (https://gezel.be)
 """Modbus TCP/IP testslave — stdlib only.
 
 Een klein maar volledig genoeg slave voor de FlexPoll-testbank:

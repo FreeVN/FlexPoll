@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 Gezel HVAC+ (https://gezel.be)
 """Minimal, dependency-light Modbus RTU master on top of pyserial.
 
 Bewust geen pymodbus: we willen exacte controle over timeouts, framing en
