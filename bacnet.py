@@ -17,6 +17,11 @@ import time
 
 BACNET_PORT = 47808
 
+# Wat wij per antwoord aankunnen: geen segmentatie (0), 1476 bytes (5). Zonder dit veld
+# juist te zetten weigert een toestel dat zelf niet kan segmenteren elk groot antwoord.
+MAX_SEGS = 0x00
+MAX_APDU_RESP = 0x05
+
 OBJ_TYPES = {
     0: "analog-input", 1: "analog-output", 2: "analog-value",
     3: "binary-input", 4: "binary-output", 5: "binary-value",
@@ -68,16 +73,18 @@ ERROR_CODES = {
     0: "other", 2: "configuration-in-progress", 3: "device-busy",
     7: "inconsistent-parameters", 9: "invalid-data-type",
     16: "missing-required-parameter", 17: "no-objects-of-specified-type",
-    18: "no-space-for-object", 23: "operational-problem",
-    25: "read-access-denied", 27: "service-request-denied", 28: "timeout",
-    29: "unknown-object", 30: "unknown-property",
-    31: "unknown-vt-class", 32: "unknown-vt-session",
-    33: "unsupported-object-type",
-    34: "value-out-of-range", 37: "write-access-denied",
-    38: "character-set-not-supported", 39: "invalid-array-index",
-    42: "optional-functionality-not-supported", 44: "parameter-out-of-range",
-    45: "list-element-not-found", 50: "invalid-configuration-data",
-    56: "duplicate-name", 57: "duplicate-object-id",
+    18: "no-space-for-object", 25: "operational-problem",
+    27: "read-access-denied", 29: "service-request-denied", 30: "timeout",
+    31: "unknown-object", 32: "unknown-property",
+    36: "unsupported-object-type", 37: "value-out-of-range",
+    40: "write-access-denied", 41: "character-set-not-supported",
+    42: "invalid-array-index", 45: "optional-functionality-not-supported",
+    46: "invalid-configuration-data", 47: "datatype-not-supported",
+    48: "duplicate-name", 49: "duplicate-object-id",
+    50: "property-is-not-an-array", 54: "segmentation-not-supported",
+    57: "invalid-tag", 58: "network-down",
+    80: "parameter-out-of-range", 81: "list-element-not-found",
+    83: "communication-disabled",
 }
 
 ERROR_HINTS = {
@@ -93,6 +100,7 @@ ERROR_HINTS = {
     "device-busy": "toestel is bezet — probeer straks opnieuw",
     "parameter-out-of-range": "parameter buiten bereik",
     "configuration-in-progress": "toestel is in configuratiemodus",
+    "segmentation-not-supported": "toestel kan niet segmenteren en het antwoord is groter dan de APDU die wij aankondigen",
 }
 
 REJECT_REASONS = {
@@ -352,8 +360,12 @@ def _ede_row(cells) -> str:
 
 
 def _ede_clean(text) -> str:
-    """Waarden mogen geen regelafbreking of scheidingsteken bevatten."""
-    return " ".join(str(text or "").split())
+    """Waarden mogen geen regelafbreking of scheidingsteken bevatten.
+
+    Ook NUL's weg: legacy-toestellen (EuroICC) leveren hun object-name met een
+    leidende \\x00, wat in de EDE-import als rommel in de naam belandt.
+    """
+    return " ".join(str(text or "").replace("\x00", "").split())
 
 
 def _slug(text: str, fallback: str) -> str:
@@ -466,7 +478,11 @@ class BacnetClient:
             inv = self._inv
             self._drain()
             self._pace()
-            self._send(ip, bytes([0x00, inv, 0x05, service]) + body)
+            # Confirmed-Request header is strikt: type | max-segs+max-resp | invoke | service.
+            # Stonden invoke en max-resp omgedraaid: dan leest het toestel ons invoke-id als
+            # "grootste APDU die ik aankan" (soms 50 bytes) en weigert het een lang antwoord
+            # met error-class communication / segmentation-not-supported i.p.v. te zenden.
+            self._send(ip, bytes([0x00, MAX_SEGS | MAX_APDU_RESP, inv, service]) + body)
             try:
                 return self._await(ip, inv, timeout, what)
             except BacnetServerError:
@@ -568,17 +584,48 @@ class BacnetClient:
         self._confirmed(ip, 0x0F, body, timeout=max(self.timeout, 3.0), what=what)
 
     # ---------------------------------------------------------------- EDE
+    @staticmethod
+    def _as_oid(oid) -> int | None:
+        """Object-id kan als int, als ("ctx", bytes) of als bytes binnenkomen."""
+        if isinstance(oid, tuple) and len(oid) == 2 and isinstance(oid[1], (bytes, bytearray)):
+            oid = oid[1]
+        if isinstance(oid, (bytes, bytearray)) and len(oid) == 4:
+            return int.from_bytes(oid, "big")
+        return oid if isinstance(oid, int) else None
+
+    def _object_list(self, ip: str, device: int, count: int, timeout: float | None) -> list[int]:
+        """Lees de object-list in één verzoek; val terug op per-element als dat niet gaat.
+
+        Eén keer de array lezen is niet enkel sneller: een toestel dat niet kan segmenteren
+        antwoordt soms helemaal niet op losse indexen, terwijl de volledige array (130 ids
+        ≈ 520 bytes) wél in één APDU past.
+        """
+        try:
+            whole = self.read_property(ip, 8, device, PROP_OBJECT_LIST, None, timeout)
+            items = whole if isinstance(whole, list) else [whole]
+            oids = [self._as_oid(x) for x in items]
+            oids = [o for o in oids if o is not None]
+            if oids:
+                return oids[:count or len(oids)]
+        except BacnetError:
+            pass
+        out = []
+        for i in range(1, min(count, 400) + 1):
+            try:
+                oid = self._as_oid(self.read_property(ip, 8, device, PROP_OBJECT_LIST, i, timeout))
+            except BacnetError:
+                break
+            if oid is None:
+                continue
+            out.append(oid)
+        return out
+
     def objects(self, ip: str, device: int, timeout: float | None = None) -> list[dict]:
         count = self.read_property(ip, 8, device, PROP_OBJECT_LIST, 0, timeout)
         if not isinstance(count, int):
             raise BacnetError("object-list niet leesbaar")
         out = []
-        for i in range(1, min(count, 400) + 1):
-            oid = self.read_property(ip, 8, device, PROP_OBJECT_LIST, i, timeout)
-            if isinstance(oid, tuple) and len(oid) == 2 and len(oid[1]) == 4:
-                oid = int.from_bytes(oid[1], "big")     # context-getagd object-id
-            if not isinstance(oid, int):
-                continue
+        for oid in self._object_list(ip, device, count, timeout):
             t, inst = oid >> 22, oid & 0x3FFFFF
             out.append({"type": t, "inst": inst, "name": OBJ_TYPES.get(t, f"type-{t}"),
                         "abbr": OBJ_ABBR.get(t, str(t))})
