@@ -210,10 +210,14 @@ BELIMO_OVERRIDE = {
     1: "Volledig open",
     2: "Volledig sluiten",
     3: "Minimum debiet",
+    4: "Mid (Vmid)",
     5: "Maximum debiet",
     6: "Snel open",
     7: "Snel dicht",
 }
+
+# Reg 118 — in welke eenheid het toestel absolute debieten toont
+BELIMO_UNITS = {0: "m³/s", 1: "m³/h", 2: "l/s", 3: "l/min", 4: "l/h", 5: "gpm", 6: "cfm"}
 
 GRUNDFOS_MODES = {0: "Auto", 4: "Minimum", 6: "Maximum"}
 
@@ -361,22 +365,42 @@ def read_em18u(bus: Bus, mod: dict) -> dict:
 
 
 def read_belimo(bus: Bus, mod: dict) -> dict:
-    regs = bus.read_holding(mod["address"], 0, 9)
-    ident = bus.read_holding(mod["address"], 100, 4)
+    addr = mod["address"]
+    regs = bus.read_holding(addr, 0, 9)
+    ident = bus.read_holding(addr, 100, 4)
     try:
-        qnom = bus.read_holding(mod["address"], 110, 1)[0]
+        qnom = bus.read_holding(addr, 110, 1)[0]
     except ModbusError:
         qnom = None
     try:
-        lim = bus.read_holding(mod["address"], 105, 2)   # 4x0106/4x0107
+        lim = bus.read_holding(addr, 105, 2)   # 4x0106/4x0107 = Vmin/Vmax
     except ModbusError:
         lim = [0, 10000]
+    # 4x0109 = bus-failstand, 4x0117 = regelmodus, 4x0118 = eenheid, 4x0119 = setpuntbron.
+    # Adres 108 is de bus-failstand; 115/116 zijn leeg (65535) en worden overgeslagen.
+    try:
+        svc = bus.read_holding(addr, 108, 1) + bus.read_holding(addr, 116, 3)
+    except ModbusError:
+        svc = [None, None, None, None]
+    bus_fail, control_mode, unit_sel, sp_source = (list(svc) + [None] * 4)[:4]
+    bus_fail = None if bus_fail == 65535 else bus_fail
+    control_mode = None if control_mode == 65535 else control_mode
+    unit_sel = None if unit_sel == 65535 else unit_sel
+    sp_source = None if sp_source == 65535 else sp_source
+
     serial = f"{(ident[0] << 32) | (ident[1] << 16) | ident[2]:012X}"
     fw = ident[3]
+    setpoint = round(regs[0] / 100.0, 2)
+    vmin = round(lim[0] / 100.0, 2)
+    vmax = round(lim[1] / 100.0, 2)
+    # Reg 1 is GEEN absoluut debiet maar een percentage dat het toestel tussen Vmin en
+    # Vmax schaalt: 0 % = Vmin, 100 % = Vmax. Zonder die vertaling leest "50 %" bij
+    # Vmin 13 / Vmax 20 als de helft van qnom, terwijl het toestel 16,6 % vraagt.
+    sp_target = round(vmin + (setpoint / 100.0) * (vmax - vmin), 2) if vmax > vmin else setpoint
     return {
         "serial": serial,
         "values": {
-            "setpoint": round(regs[0] / 100.0, 2),
+            "setpoint": setpoint,
             "override": regs[1],
             "override_txt": BELIMO_OVERRIDE.get(regs[1], f"code {regs[1]}"),
             "actuator_type": regs[3],
@@ -386,9 +410,25 @@ def read_belimo(bus: Bus, mod: dict) -> dict:
             "flow": regs[7],
             "sensor_mv": regs[8],
             "qnom": qnom,
-            "vmin": round(lim[0] / 100.0, 2),
-            "vmax": round(lim[1] / 100.0, 2),
+            "vmin": vmin,
+            "vmax": vmax,
+            "sp_target": sp_target,
+            "sp_flow": round(qnom * sp_target / 100.0, 1) if qnom else None,
+            "control_mode": control_mode,
+            "control_mode_txt": BELIMO_CONTROLMODES.get(control_mode, ""),
+            "unit_sel": unit_sel,
+            "unit_txt": BELIMO_UNITS.get(unit_sel, ""),
+            "sp_source": sp_source,
+            "sp_source_txt": {0: "Analoog", 1: "Bus"}.get(sp_source, ""),
+            "bus_fail": bus_fail,
+            "bus_fail_txt": {0: "Laatste setpunt", 1: "Snel dicht", 2: "Snel open",
+                             3: "Mid-stand (Vmid)"}.get(bus_fail, ""),
             "firmware": f"{fw // 100}.{fw % 100:02d}",
+            # Vmid is géén Modbus-register bij de VAV-Compact (map stopt op 4x0119).
+            # Het staat als vaste parameter in het toestel (ZTH EU / PC-Tool) en wordt
+            # enkel gebruikt door override 4 en bus-failstand 3 — daarom tonen we het
+            # als 'geparametreerd', niet als meetwaarde.
+            "vmid": "geparametreerd",
         },
     }
 
@@ -1096,6 +1136,14 @@ def perform(bus: Bus, mod: dict, op: str, data: dict) -> str:
             if not 0 <= pct <= 100:
                 raise ActionError("setpunt moet tussen 0 en 100 % liggen")
             bus.write_register(addr, 0, int(round(pct * 100)))
+            if mtype == "belimo":
+                # het toestel schaalt dit percentage tussen Vmin en Vmax
+                try:
+                    lo, hi = bus.read_holding(addr, 105, 2)
+                    tgt = lo / 100.0 + (pct / 100.0) * ((hi - lo) / 100.0)
+                    return f"setpunt -> {pct:.1f} % = {tgt:.1f} % van Vnom"
+                except ModbusError:
+                    pass
             return f"setpunt -> {pct:.1f} %"
         raise ActionError(f"actie '{op}' niet ondersteund voor {TYPES[mtype]['name']}")
 

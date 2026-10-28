@@ -375,6 +375,10 @@ button.io:hover { border-color: #c9d5e2; background: #fff; }
 .limrow input { width: 50px; height: 26px; border-radius: 7px; border: 1px solid var(--line); padding: 0 5px; font: inherit; font-size: 11px; }
 .limrow span { font-size: 9.5px; color: #8b96a3; }
 .limrow .btn { margin-left: auto; }
+.limrow .vmid { font-size: 10.5px; font-weight: 700; color: var(--blue-dark); }
+.limrow .muted { font-size: 9px; color: #a3adb9; }
+.sp-hint { margin-top: 4px; font-size: 9.5px; color: #7c8794; line-height: 1.35; }
+.sp-hint b { color: var(--blue-dark); font-weight: 700; }
 
 .lr { display: flex; align-items: center; gap: 4px; margin-top: 9px; }
 .lr .lbl { font-size: 9.5px; font-weight: 700; color: #6b7785; text-transform: uppercase; letter-spacing: .04em; margin-right: 3px; }

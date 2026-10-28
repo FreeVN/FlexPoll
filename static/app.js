@@ -335,6 +335,31 @@
     </div>`;
   }
 
+  // Het setpunt van een VAV (reg 1) is geen absolute waarde: het toestel schaalt
+  // het percentage tussen Vmin (106) en Vmax (107). 0 % = Vmin, 100 % = Vmax.
+  function spTarget(v, pct) {
+    const lo = isNum(v?.vmin) ? v.vmin : 0;
+    const hi = isNum(v?.vmax) ? v.vmax : 100;
+    if (!(hi > lo)) return pct;
+    return lo + (pct / 100) * (hi - lo);
+  }
+
+  function renderSpHint(card, v, pctOverride) {
+    const el = card.querySelector('[data-role="sphint"]');
+    if (!el) return;
+    const pct = isNum(pctOverride) ? pctOverride : v?.setpoint;
+    if (!isNum(pct)) { el.textContent = "—"; return; }
+    const tgt = spTarget(v, pct);
+    if (v.control_mode === 0) {
+      el.innerHTML = `setpunt ${num(pct, 1)} % → klepstand <b>${num(tgt, 1)} %</b>`;
+      return;
+    }
+    const flow = isNum(v.qnom) ? (v.qnom * tgt) / 100 : null;
+    el.innerHTML = `setpunt ${num(pct, 1)} % → <b>${num(tgt, 1)} %</b> van Vnom`
+      + (flow != null ? ` ≈ <b>${num(flow, 0)} m³/h</b>` : "")
+      + (v.control_mode === 1 ? " · debietsturing" : "");
+  }
+
   function lrRow() {
     return `<div class="lr">
       <span class="lbl">Aansturing</span>
@@ -408,10 +433,17 @@
           </div>
           <div class="ctrl-row">
             <label>Setpunt</label>
-            <input type="number" min="0" max="100" step="0.5" data-role="setpoint" placeholder="%">
+            <input type="number" min="0" max="100" step="0.5" data-role="setpoint" placeholder="%"
+                   title="0 % = Vmin, 100 % = Vmax. Het toestel schaalt dit tussen beide grenzen.">
             <button class="btn small primary" type="button" data-act="setsp">Zet</button>
           </div>
-          ${flowLimits(m)}`;
+          <div class="sp-hint" data-role="sphint">—</div>
+          ${flowLimits(m)}
+          <div class="limrow">
+            <label>Vmid</label>
+            <span class="vmid" data-role="vmid">geparametreerd</span>
+            <span class="muted" data-role="vmidnote">enkel via ZTH EU / PC-Tool</span>
+          </div>`;
 
       case "wilo_stratos":
         return `
@@ -915,6 +947,9 @@
         if (sel && document.activeElement !== sel) sel.value = String(v.override);
         const sp = card.querySelector('[data-role="setpoint"]');
         if (sp && document.activeElement !== sp) sp.placeholder = `${num(v.setpoint, 1)} %`;
+        renderSpHint(card, v);
+        const vm = card.querySelector('[data-role="vmid"]');
+        if (vm) vm.textContent = v.vmid || "geparametreerd";
       }
 
       if (m.type === "grundfos") {
@@ -1516,6 +1551,17 @@
         const now = io.classList.contains("on") ? 1 : 0;
         doAction(id, "toggle_do", { ch, value: now ? 0 : 1 });
       }
+    });
+
+    // meetypen in het setpuntveld: meteen tonen wat het toestel ervan maakt
+    $("#modules").addEventListener("input", (e) => {
+      if (e.target.dataset.role !== "setpoint") return;
+      const card = e.target.closest(".card");
+      if (!card) return;
+      const mod = state.modules.find((m) => m.id === card.dataset.id);
+      const v = (mod && mod.state && mod.state.values) || {};
+      const pct = parseFloat(e.target.value);
+      renderSpHint(card, v, isFinite(pct) ? pct : null);
     });
 
     $("#modules").addEventListener("change", (e) => {
