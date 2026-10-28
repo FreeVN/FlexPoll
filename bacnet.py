@@ -52,6 +52,103 @@ class BacnetError(Exception):
     pass
 
 
+class BacnetServerError(BacnetError):
+    """Het toestel antwoordde met error/reject/abort — opnieuw sturen helpt niet."""
+    definitive = True
+
+
+# --- named codes: een kale "toestel weigert" verbergt precies de informatie
+# --- die je nodig hebt (verkeerd property, read-only punt, verkeerde index).
+ERROR_CLASSES = {
+    0: "device", 1: "object", 2: "property", 3: "resources",
+    4: "security", 5: "services", 6: "vt", 7: "communication",
+}
+
+ERROR_CODES = {
+    0: "other", 2: "configuration-in-progress", 3: "device-busy",
+    7: "inconsistent-parameters", 9: "invalid-data-type",
+    16: "missing-required-parameter", 17: "no-objects-of-specified-type",
+    18: "no-space-for-object", 23: "operational-problem",
+    25: "read-access-denied", 27: "service-request-denied", 28: "timeout",
+    29: "unknown-object", 30: "unknown-property",
+    31: "unknown-vt-class", 32: "unknown-vt-session",
+    33: "unsupported-object-type",
+    34: "value-out-of-range", 37: "write-access-denied",
+    38: "character-set-not-supported", 39: "invalid-array-index",
+    42: "optional-functionality-not-supported", 44: "parameter-out-of-range",
+    45: "list-element-not-found", 50: "invalid-configuration-data",
+    56: "duplicate-name", 57: "duplicate-object-id",
+}
+
+ERROR_HINTS = {
+    "unknown-object": "dat object bestaat niet op dit toestel — klopt instance/type?",
+    "unknown-property": "dit toestel kent dat property niet — sommige leveranciers gebruiken een eigen (vendor-)property",
+    "write-access-denied": "punt is read-only of het toestel staat in monitor-only",
+    "read-access-denied": "dit punt is niet leesbaar (write-only of beveiligd)",
+    "invalid-array-index": "gevraagde index bestaat niet (array te kort of index 0 nodig)",
+    "service-request-denied": "toestel weigert deze service — vaak staat schrijven uit op het toestel zelf",
+    "optional-functionality-not-supported": "toestel ondersteunt deze service niet (bv. geen WriteProperty)",
+    "value-out-of-range": "waarde buiten het bereik van het punt",
+    "invalid-data-type": "verkeerd datatype voor dit property (bv. enum naar analog)",
+    "device-busy": "toestel is bezet — probeer straks opnieuw",
+    "parameter-out-of-range": "parameter buiten bereik",
+    "configuration-in-progress": "toestel is in configuratiemodus",
+}
+
+REJECT_REASONS = {
+    0: "other", 1: "buffer-overflow", 2: "inconsistent-parameters",
+    3: "invalid-parameter-data-type", 4: "invalid-tag", 5: "missing-required-parameter",
+    6: "parameter-out-of-range", 7: "too-many-arguments", 8: "undefined-enumeration",
+    9: "unrecognized-service",
+}
+
+ABORT_REASONS = {
+    0: "other", 1: "buffer-overflow", 2: "invalid-apdu-in-this-state",
+    3: "preempted-by-higher-priority-task", 4: "segmentation-not-supported",
+    5: "security-error", 6: "insufficient-security", 7: "window-size-out-of-range",
+    8: "application-exceeded-reply-time", 9: "out-of-resources", 10: "tsm-timeout",
+    11: "apdu-too-long",
+}
+
+
+def _enum_from(buf: bytes, i: int):
+    """Lees een getal-tag (applicatie-ENUMERATED 0x91 of context-tag); → (waarde, index)."""
+    if i >= len(buf):
+        return None, i
+    tag, _cls, ln, start = _read_tag(buf, i)
+    if ln == 0:
+        return None, start
+    return int.from_bytes(buf[start:start + ln], "big"), start + ln
+
+
+def describe_apdu_error(apdu: bytes, what: str = "") -> str:
+    """Vertaal een error/reject/abort-PDU naar iets waar je iets aan hebt."""
+    prefix = f"{what}: " if what else ""
+    kind = apdu[0] & 0xF0
+    if kind == 0x50:                                  # error
+        # error-PDU: [0]=0x50 | [1]=invoke-id | [2]=service | [3..]=error-class+error-code
+        cls = code = None
+        if len(apdu) > 3:
+            cls, i = _enum_from(apdu, 3)
+            code, _ = _enum_from(apdu, i)
+        cls_name = ERROR_CLASSES.get(cls, f"class {cls}")
+        code_name = ERROR_CODES.get(code, f"code {code}")
+        msg = f"{prefix}toestel weigert het verzoek — error-class {cls_name}, error-code {code_name}"
+        hint = ERROR_HINTS.get(code_name)
+        return msg + (f" ({hint})" if hint else "")
+    if kind == 0x60:                                  # reject
+        reason = apdu[2] if len(apdu) > 2 else None
+        return (f"{prefix}verzoek afgewezen — reject reason "
+                f"{REJECT_REASONS.get(reason, reason)} (PDU zelf ongeldig, niet het punt)")
+    if kind == 0x70:                                  # abort
+        server = bool(apdu[0] & 0x01)                 # server-flag zit in het type-octet
+        reason = apdu[2] if len(apdu) > 2 else None
+        who = "toestel" if server else "wij"
+        return (f"{prefix}verzoek afgebroken door {who} — abort reason "
+                f"{ABORT_REASONS.get(reason, reason)}")
+    return prefix + "onbekend antwoord"
+
+
 # --------------------------------------------------------------------------- encoding
 def _ctx(num: int, data: bytes) -> bytes:
     """Context-tag: tag(4 bits) | klasse=1 (0x08) | lengte(3 bits)."""
@@ -356,8 +453,13 @@ class BacnetClient:
             self.sock.setblocking(True)
 
     def _confirmed(self, ip: str, service: int, body: bytes, timeout: float | None = None,
-                   attempts: int = 3):
-        """Eén verzoek tegelijk; UDP kan een antwoord verliezen, dus we proberen het opnieuw."""
+                   attempts: int = 3, what: str = ""):
+        """Eén verzoek tegelijk; UDP kan een antwoord verliezen, dus we proberen het opnieuw.
+
+        Alleen bij timeouts is opnieuw sturen zinvol: een error/reject/abort-PDU is een
+        beslissing van het toestel en blijft dezelfde — daar verbergen we niets achter
+        een retry, we gooien de echte reden meteen naar boven.
+        """
         last: Exception | None = None
         for _ in range(max(1, attempts)):
             self._inv = (self._inv % 127) + 1
@@ -366,13 +468,15 @@ class BacnetClient:
             self._pace()
             self._send(ip, bytes([0x00, inv, 0x05, service]) + body)
             try:
-                return self._await(ip, inv, timeout)
+                return self._await(ip, inv, timeout, what)
+            except BacnetServerError:
+                raise
             except BacnetError as exc:
                 last = exc
                 time.sleep(0.05)
         raise last or BacnetError("geen antwoord")
 
-    def _await(self, ip: str, inv: int, timeout: float | None = None):
+    def _await(self, ip: str, inv: int, timeout: float | None = None, what: str = ""):
         deadline = time.time() + (timeout or self.timeout)
         while True:
             apdu, _src = self._recv(deadline)
@@ -383,12 +487,8 @@ class BacnetClient:
                 return apdu[3:]
             if pdu_type == 0x20 and len(apdu) > 1:      # simple ack
                 return b""
-            if pdu_type == 0x50:
-                raise BacnetError("BACnet error (toestel weigert het verzoek)")
-            if pdu_type == 0x60:
-                raise BacnetError("BACnet reject (onbekende parameter)")
-            if pdu_type == 0x70:
-                raise BacnetError("BACnet abort")
+            if pdu_type in (0x50, 0x60, 0x70):          # error / reject / abort
+                raise BacnetServerError(describe_apdu_error(apdu, what))
 
     # ---------------------------------------------------------------- services
     def whois(self, timeout: float = 3.0, subnets: list[str] | None = None) -> list[dict]:
@@ -446,7 +546,10 @@ class BacnetClient:
         body = _ctx(0, _obj_id(obj_type, instance)) + _ctx(1, _uint_bytes(prop))
         if index is not None:
             body += _ctx(2, _uint_bytes(index))
-        rest = self._confirmed(ip, 0x0C, body, timeout)
+        what = f"lezen {OBJ_ABBR.get(obj_type, obj_type)} {instance} · property {prop}"
+        if index is not None:
+            what += f"[{index}]"
+        rest = self._confirmed(ip, 0x0C, body, timeout, what=what)
         return parse_ack(rest)
 
     def write_property(self, ip: str, obj_type: int, instance: int, prop: int, value) -> None:
@@ -461,7 +564,8 @@ class BacnetClient:
         else:
             raise BacnetError("ongeldige waarde")
         body = _ctx(0, _obj_id(obj_type, instance)) + _ctx(1, _uint_bytes(prop)) + b"\x3e" + enc + b"\x3f"
-        self._confirmed(ip, 0x0F, body, timeout=max(self.timeout, 3.0))
+        what = f"schrijven {OBJ_ABBR.get(obj_type, obj_type)} {instance} · property {prop}"
+        self._confirmed(ip, 0x0F, body, timeout=max(self.timeout, 3.0), what=what)
 
     # ---------------------------------------------------------------- EDE
     def objects(self, ip: str, device: int, timeout: float | None = None) -> list[dict]:
