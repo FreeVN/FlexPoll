@@ -13,6 +13,24 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Distributiekanalen.** Naast de broninstallatie nu ook:
+  - `scripts/install.sh` — Linux in één commando (klonen, venv, systemd-unit,
+    `--update`, `--uninstall`);
+  - `Dockerfile` + `docker-compose.yml` (image op GHCR bij elke tag);
+  - zelfstandige builds via PyInstaller (`flexpoll.spec`): Windows `.exe`, Linux
+    en macOS, gebouwd door `.github/workflows/release.yml` en aan de release
+    gehangen;
+  - `make dist` en `make docker` voor lokaal gebruik.
+- **Configuratiepad buiten de installatiemap** bij een ingepakte build: `data/`
+  gaat naar `%APPDATA%\FlexPoll`, `~/Library/Application Support/FlexPoll` of
+  `~/.local/share/FlexPoll`. Te overschrijven met `FLEXPOLL_DATA`. Een
+  broninstallatie blijft `data/` naast de code gebruiken — bestaande opstellingen
+  merken niets.
+- **Ingepakte builds openen de browser zelf**; `--no-browser` zet dat uit.
+- De opstartregel toont nu de versie én het pad van de configuratie.
+
 ## [1.0.0] — 2026-10-28
 
 Eerste publieke release. FlexPoll is geschreven op de werf en heeft daar op echte

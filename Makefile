@@ -5,7 +5,7 @@
 PY ?= .venv/bin/python
 PORT ?= 8098
 
-.PHONY: help venv check lint smoke run sim release clean
+.PHONY: help venv check lint smoke run sim release dist docker clean
 
 help:
 	@echo "make venv     — .venv aanmaken en pyserial installeren"
@@ -14,6 +14,8 @@ help:
 	@echo "make run      — app op :8099 tegen de echte bus"
 	@echo "make sim      — app op :$(PORT) met de simulator"
 	@echo "make release V=1.1.0 — versie bumpen, changelog, commit, tag"
+	@echo "make dist     — zelfstandige build voor dit OS (dist/FlexPoll/)"
+	@echo "make docker   — container-image bouwen"
 
 venv:
 	python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
@@ -42,6 +44,17 @@ sim:
 release:
 	@test -n "$(V)" || { echo "gebruik: make release V=1.1.0"; exit 1; }
 	scripts/release.sh $(V)
+
+# Zelfstandige build voor het OS waarop je dit draait (PyInstaller bouwt niet
+# cross-platform — de release-workflow doet de drie samen).
+dist:
+	$(PY) -m pip -q install pyinstaller
+	$(PY) -m PyInstaller --noconfirm --clean flexpoll.spec
+	@echo "klaar: dist/FlexPoll/"
+
+docker:
+	docker build -t flexpoll:$(shell cat VERSION) -t flexpoll:latest .
+	@echo "gereden: docker run --rm -p 8099:8099 flexpoll:latest"
 
 clean:
 	rm -rf __pycache__ .ruff_cache /tmp/flexpoll-state.json

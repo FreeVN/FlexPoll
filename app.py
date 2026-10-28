@@ -16,9 +16,11 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import uuid
+import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -43,7 +45,32 @@ def _read_version() -> str:
 APP_VERSION = _read_version()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+
+
+def _data_dir() -> str:
+    """Waar de configuratie leeft.
+
+    - In de repo of een service-installatie: `data/` naast de code (gedrag van
+      oudsher, de systemd-unit rekent erop).
+    - In een ingepakte build (PyInstaller): naast de code bestaat die map niet
+      schrijfbaar of ze verdwijnt bij de volgende start, dus gaan we naar de
+      gebruiker zijn gegevensmap. Overschrijfbaar met FLEXPOLL_DATA.
+    """
+    env = os.environ.get("FLEXPOLL_DATA")
+    if env:
+        return env
+    if getattr(sys, "frozen", False):
+        if os.name == "nt":
+            root = os.environ.get("APPDATA") or os.path.expanduser("~")
+        elif sys.platform == "darwin":
+            root = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+        else:
+            root = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+        return os.path.join(root, "FlexPoll")
+    return os.path.join(BASE_DIR, "data")
+
+
+DATA_DIR = _data_dir()
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 
@@ -1108,6 +1135,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8099)
     parser.add_argument("--simulate", action="store_true")
     parser.add_argument("--version", action="version", version=f"FlexPoll {APP_VERSION}")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="start geen browser (enkel bij een ingepakte build)")
     args = parser.parse_args()
 
     simulate = args.simulate or os.environ.get("MODBUS_SIM") == "1"
@@ -1115,7 +1144,12 @@ def main() -> None:
     Handler.app = app
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.daemon_threads = True
-    print(f"FlexPoll op http://{args.host}:{args.port}  (sim={simulate})", flush=True)
+    url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.port}"
+    print(f"FlexPoll {APP_VERSION} op {url}  (sim={simulate})", flush=True)
+    print(f"config: {CONFIG_PATH}", flush=True)
+    if getattr(sys, "frozen", False) and not args.no_browser:
+        # Ingepakte build: de gebruiker start een programma, geen server.
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

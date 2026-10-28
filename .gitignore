@@ -16,6 +16,11 @@ venv/
 state.json
 /opt/flexpoll.bak-*/
 
+# PyInstaller
+/build/
+/dist/
+*.manifest
+
 # Editors en OS
 .DS_Store
 .idea/

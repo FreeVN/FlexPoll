@@ -1,0 +1,26 @@
+# FlexPoll naast je andere containers. Pas `devices:` aan naar jouw adapter.
+#
+#   docker compose up -d
+#
+# De USB-RS485-adapter vind je met `ls -l /dev/serial/by-id/`. Gebruik bij
+# voorkeur dat pad: /dev/ttyUSB0 verspringt wanneer je iets anders inplugt.
+services:
+  flexpoll:
+    build: .
+    image: flexpoll:latest
+    container_name: flexpoll
+    restart: unless-stopped
+    ports:
+      - "8099:8099"
+    volumes:
+      - flexpoll-data:/data
+    devices:
+      - /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A0000AAA-if00-port0:/dev/ttyUSB0
+    group_add:
+      - dialout
+    # Voor BACnet/IP-discovery: zet de poort op de host-stack in plaats van
+    # `ports:`. UDP-broadcast over een bridge komt niet aan.
+    # network_mode: host
+
+volumes:
+  flexpoll-data:

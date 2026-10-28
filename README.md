@@ -35,28 +35,74 @@ Modbus TCP/IP and BACnet/IP. Stand-alone: Python standard library plus
 
 ## Installatie
 
-```bash
-git clone <repo-url> flexpoll
-cd flexpoll
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+Vier wegen, van licht naar zwaar. Ze leveren allemaal hetzelfde: een web-UI op
+poort 8099 die met je eigen seriële poort en je eigen netwerk praat.
 
-sudo cp -r . /opt/flexpoll          # of draai rechtstreeks uit de clone
-sudo cp flexpoll.service /etc/systemd/system/
-sudo systemctl enable --now flexpoll
+### Linux — één script
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fvannieuwenhove/flexpoll/main/scripts/install.sh \
+  | sudo bash -s --
+# of, als je de repo al hebt:
+sudo scripts/install.sh              # kloont naar /opt/flexpoll, maakt venv + service
+sudo scripts/install.sh --update     # git pull + herstart
+sudo scripts/install.sh --uninstall  # service weg, data blijft
+```
+
+Zet je gebruiker in de `dialout`-groep, anders kan de app de adapter niet openen:
+
+```bash
+sudo usermod -aG dialout "$USER" && sudo systemctl restart flexpoll
+```
+
+### Docker
+
+```bash
+docker run -d --name flexpoll -p 8099:8099 \
+  --device /dev/serial/by-id/usb-FTDI_...-if00-port0:/dev/ttyUSB0 \
+  --group-add dialout -v flexpoll-data:/data \
+  ghcr.io/fvannieuwenhove/flexpoll:latest
+```
+
+Of `docker compose up -d` met de meegeleverde [`docker-compose.yml`](docker-compose.yml).
+Voor BACnet/IP-discovery heb je `--network host` nodig: UDP-broadcast over een
+brug gaat de deur niet uit.
+
+### Zelfstandige build (Windows .exe, Linux, macOS)
+
+Download de zip/tar van de [releases](https://github.com/fvannieuwenhove/flexpoll/releases),
+pak uit en start `FlexPoll/flexpoll` (Windows: `flexpoll.exe`). Er is geen Python
+nodig; de browser opent vanzelf. De config komt in je gegevensmap
+(`%APPDATA%\FlexPoll`, `~/Library/Application Support/FlexPoll`,
+`~/.local/share/FlexPoll`), niet naast de binary.
+
+Zelf bouwen:
+
+```bash
+make dist     # pyinstaller flexpoll.spec → dist/FlexPoll/
+```
+
+De builds zijn niet ondertekend. Windows SmartScreen zal waarschuwen
+("Meer informatie" → "Toch uitvoeren"), macOS wil rechtsklik → Open. Wil je dat
+niet, gebruik dan de Docker- of script-route.
+
+### Vanuit de source
+
+```bash
+git clone <repo-url> flexpoll && cd flexpoll
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python app.py --port 8099
 ```
 
 Open `http://<host>:8099`.
 
-Zonder systemd:
+> **Let op:** FlexPoll heeft geen authenticatie. Zet hem op een besloten netwerk
+> of achter Tailscale/VPN, niet rechtstreeks op het internet.
 
-```bash
-.venv/bin/python app.py --host 0.0.0.0 --port 8099
-.venv/bin/python app.py --version
-```
-
-De configuratie staat in `data/config.json`. Die map staat in `.gitignore` — ze
-bevat de echte opstelling (poorten, IP's, modulelijsten) en gaat nooit mee in een
-release.
+De configuratie staat in `data/config.json` (bij een broninstallatie) of in de
+gegevensmap hierboven (bij een ingepakte build) — overschrijfbaar met
+`FLEXPOLL_DATA`. Die map staat in `.gitignore`: ze bevat de echte opstelling
+(poorten, IP's, modulelijsten) en gaat nooit mee in een release.
 
 ## Zonder hardware
 
@@ -81,7 +127,12 @@ tegenpartijen voor de TCP- en BACnet-tab.
 | `sim.py` | RTU-simulator |
 | `modbus_tcp_slave.py`, `tests/bacnet_slave.py` | testslaves |
 | `static/` | front-end (vanilla JS, geen build-stap) |
-| `scripts/deploy.sh` | deploy naar een remote Pi (tar over ssh) |
+| `scripts/install.sh` | Linux: klonen, venv, systemd-unit, update, uninstall |
+| `scripts/release.sh` | versie bumpen + changelog-kop + commit + tag |
+| `scripts/smoke.py` | rooktest tegen de simulator (ook in CI) |
+| `scripts/deploy.sh` | deploy naar een remote host (tar over ssh) |
+| `flexpoll.spec` | PyInstaller-recept voor de zelfstandige builds |
+| `Dockerfile`, `docker-compose.yml` | container-image met volume voor `data/` |
 
 ## Ontwikkelen
 

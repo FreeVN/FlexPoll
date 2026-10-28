@@ -15,9 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -41,7 +43,11 @@ def main() -> int:
     args = parser.parse_args()
     port = args.port or free_port()
 
-    env = {**os.environ, "MODBUS_SIM": "1", "PYTHONUNBUFFERED": "1"}
+    # Eigen, lege config-map: de rooktest mag nooit de echte opstelling laden of
+    # overschrijven (die van de gebruiker of die van de CI-cache).
+    data_dir = tempfile.mkdtemp(prefix="flexpoll-smoke-")
+    env = {**os.environ, "MODBUS_SIM": "1", "PYTHONUNBUFFERED": "1",
+           "FLEXPOLL_DATA": data_dir}
     proc = subprocess.Popen(
         [sys.executable, os.path.join(ROOT, "app.py"), "--port", str(port)],
         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -89,6 +95,7 @@ def main() -> int:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        shutil.rmtree(data_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

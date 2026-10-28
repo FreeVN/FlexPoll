@@ -1,0 +1,132 @@
+name: Release
+
+# Bouwt bij elke tag vX.Y.Z een zelfstandige FlexPoll voor Windows, Linux en
+# macOS, hangt ze aan de GitHub-release en pusht een container-image naar GHCR.
+#
+#   git tag -a v1.1.0 -m "FlexPoll 1.1.0" && git push --follow-tags
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            archive: tar.gz
+          - os: windows-latest
+            label: windows-x64
+            archive: zip
+          - os: macos-14
+            label: macos-arm64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build (PyInstaller, onedir)
+        run: pyinstaller --noconfirm --clean flexpoll.spec
+
+      - name: Versie uit de bundel controleren
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="dist/FlexPoll/flexpoll.exe"; else BIN="dist/FlexPoll/flexpoll"; fi
+          "$BIN" --version
+          test "$("$BIN" --version)" = "FlexPoll $(cat VERSION)"
+
+      - name: Inpakken (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          cd dist
+          tar czf "FlexPoll-${GITHUB_REF_NAME}-${{ matrix.label }}.tar.gz" FlexPoll
+
+      - name: Inpakken (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "FlexPoll-${GITHUB_REF_NAME}-${{ matrix.label }}.zip" FlexPoll > /dev/null
+          else
+            zip -qr "FlexPoll-${GITHUB_REF_NAME}-${{ matrix.label }}.zip" FlexPoll
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flexpoll-${{ matrix.label }}
+          path: |
+            dist/FlexPoll-*.tar.gz
+            dist/FlexPoll-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publiceren
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Eén release per tag; bestaande laten staan zodat een her-run aanvult.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "FlexPoll ${GITHUB_REF_NAME#v}" \
+                 --notes-file <(sed -n "/## \[${GITHUB_REF_NAME#v}\]/,/^## \[/p" CHANGELOG.md | sed '$d')
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print -exec \
+            gh release upload "$GITHUB_REF_NAME" {} --clobber \;
+
+  container:
+    name: Container (GHCR)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
