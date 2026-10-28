@@ -412,6 +412,10 @@ def read_belimo(bus: Bus, mod: dict) -> dict:
             "qnom": qnom,
             "vmin": vmin,
             "vmax": vmax,
+            # absolute tegenhangers (m³/h) zodat de tegel in debiet kan werken;
+            # de regs zelf blijven procenten van Vnom.
+            "vmin_flow": round(qnom * vmin / 100.0, 1) if qnom else None,
+            "vmax_flow": round(qnom * vmax / 100.0, 1) if qnom else None,
             "sp_target": sp_target,
             "sp_flow": round(qnom * sp_target / 100.0, 1) if qnom else None,
             "control_mode": control_mode,
@@ -1074,14 +1078,46 @@ def perform(bus: Bus, mod: dict, op: str, data: dict) -> str:
         raise ActionError(f"actie '{op}' niet ondersteund voor Daikin")
 
     if op == "set_vminmax" and mtype in ("belimo", "belimo_ev"):
-        vmin = float(data.get("vmin", -1))
-        vmax = float(data.get("vmax", -1))
+        flow_mode = "vmin_flow" in data or "vmax_flow" in data
+        if flow_mode:
+            # Absolute grenzen: het toestel rekent in procenten van Vnom, dus wij
+            # rekenen terug met qnom (reg 111, altijd m³/h). Zonder qnom is dit
+            # niet eenduidig — dan liever een fout dan een verkeerd geschreven grens.
+            qnom = bus.read_holding(addr, 110, 1)[0]
+            if not qnom:
+                raise ActionError("qnom (reg 111) is 0 of onleesbaar — geen absolute grenzen mogelijk")
+            try:
+                fmin = float(data.get("vmin_flow", 0))
+                fmax = float(data.get("vmax_flow", 0))
+            except (TypeError, ValueError):
+                raise ActionError("ongeldige debietwaarde") from None
+            vmin = fmin / qnom * 100.0
+            vmax = fmax / qnom * 100.0
+            if fmin < 0 or fmax <= 0:
+                raise ActionError("debieten moeten positief zijn")
+            if fmax > qnom:
+                raise ActionError(f"Vmax kan niet boven qnom ({qnom} m³/h) liggen")
+        else:
+            vmin = float(data.get("vmin", -1))
+            vmax = float(data.get("vmax", -1))
         if not (0 <= vmin <= 100 and 0 <= vmax <= 100):
-            raise ActionError("Vmin/Vmax moeten tussen 0 en 100 % liggen")
+            raise ActionError("Vmin/Vmax moeten tussen 0 en 100 % van Vnom liggen")
         if vmin > vmax:
             raise ActionError("Vmin mag niet groter zijn dan Vmax")
-        bus.write_registers(addr, 105, [int(round(vmin * 100)), int(round(vmax * 100))])
-        return f"Vmin {vmin:g} % / Vmax {vmax:g} %"
+        rmin, rmax = int(round(vmin * 100)), int(round(vmax * 100))
+        if mtype == "belimo" and rmax < 2000:
+            # manual: Max ≥ Min én > 20 % van Vnom. Eén honderdste procent speling:
+            # 554 m³/h bij qnom 2771 is 19,99 % en zou anders onterecht geweigerd worden.
+            if rmax >= 1990:
+                rmax = 2000
+            else:
+                raise ActionError("Vmax moet minstens 20 % van Vnom zijn")
+        bus.write_registers(addr, 105, [rmin, rmax])
+        eff_min, eff_max = rmin / 100.0, rmax / 100.0
+        if flow_mode:
+            return (f"Vmin {eff_min / 100 * qnom:.0f} m³/h ({eff_min:.2f} %) / "
+                    f"Vmax {eff_max / 100 * qnom:.0f} m³/h ({eff_max:.2f} %) · qnom {qnom} m³/h")
+        return f"Vmin {eff_min:g} % / Vmax {eff_max:g} %"
 
     if op == "set_vmax_seq" and mtype == "belimo_epiv6":
         s1 = float(data.get("seq1", -1))

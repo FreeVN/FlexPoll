@@ -326,6 +326,18 @@
         <button class="btn tiny primary" type="button" data-act="setvmax">Zet</button>
       </div>`;
     }
+    if (m.type === "belimo") {
+      // In debietsturing geven we absolute waarden in m³/h; de tool rekent terug
+      // naar % van Vnom (register 106/107 blijven procenten).
+      return `<div class="limrow">
+        <label>Vmin</label><input type="number" min="0" step="1" data-role="vmin" title="Minimum debiet (register 106, % van Vnom — de tool rekent om)">
+        <span data-role="vminunit">m³/h</span>
+        <label>Vmax</label><input type="number" min="0" step="1" data-role="vmax" title="Maximum debiet (register 107, % van Vnom — de tool rekent om)">
+        <span data-role="vmaxunit">m³/h</span>
+        <button class="btn tiny primary" type="button" data-act="setvlim">Zet</button>
+      </div>
+      <div class="sp-hint" data-role="limhint">—</div>`;
+    }
     return `<div class="limrow">
       <label>Vmin</label><input type="number" min="0" max="100" step="0.5" data-role="vmin" title="Minimaal debiet in % van Vnom (register 106)">
       <span>%</span>
@@ -342,6 +354,30 @@
     const hi = isNum(v?.vmax) ? v.vmax : 100;
     if (!(hi > lo)) return pct;
     return lo + (pct / 100) * (hi - lo);
+  }
+
+  // Vmin/Vmax in de eenheid die bij de regelmodus past: m³/h bij debietsturing,
+  // % bij positiesturing (daar zijn het klepstand-grenzen, geen debieten).
+  function renderLimits(card, v) {
+    const flow = v.control_mode === 1 && isNum(v.qnom) && v.qnom > 0;
+    for (const [role, flowKey, pctKey] of [["vmin", "vmin_flow", "vmin"], ["vmax", "vmax_flow", "vmax"]]) {
+      const el = card.querySelector(`[data-role="${role}"]`);
+      if (!el) continue;
+      const unit = card.querySelector(`[data-role="${role}unit"]`);
+      el.step = flow ? "1" : "0.5";
+      el.max = flow ? String(Math.round(v.qnom)) : "100";
+      el.classList.toggle("wide", flow);
+      if (unit) unit.textContent = flow ? "m³/h" : "%";
+      if (document.activeElement === el) continue;
+      const val = flow ? v[flowKey] : v[pctKey];
+      el.value = isNum(val) ? String(val) : "";
+    }
+    const hint = card.querySelector('[data-role="limhint"]');
+    if (hint) {
+      hint.textContent = flow
+        ? `Vmin ${num(v.vmin, 2)} % · Vmax ${num(v.vmax, 2)} % van Vnom — qnom ${num(v.qnom, 0)} m³/h`
+        : (v.control_mode === 0 ? "Positiesturing: de grenzen zijn klepstand in %" : "—");
+    }
   }
 
   function renderSpHint(card, v, pctOverride) {
@@ -769,12 +805,15 @@
       }
       const v = st.values;
 
-      if (m.type === "belimo" || m.type === "belimo_ev") {
+      if (m.type === "belimo") {
+        renderLimits(card, v);
+      }
+      if (m.type === "belimo_ev") {
         for (const [role, key] of [["vmin", "vmin"], ["vmax", "vmax"]]) {
           const el = card.querySelector(`[data-role="${role}"]`);
           if (el && document.activeElement !== el) el.value = isNum(v[key]) ? String(v[key]) : "";
         }
-        if (m.type === "belimo_ev") setText(card, "vnom", isNum(v.vnom) ? num(v.vnom, 2) : "—");
+        setText(card, "vnom", isNum(v.vnom) ? num(v.vnom, 2) : "—");
       }
       if (m.type === "belimo_epiv6") {
         for (const [role, key] of [["vmax1", "vmax1_ls"], ["vmax2", "vmax2_ls"]]) {
@@ -1492,7 +1531,13 @@
         const vmax = parseFloat(c.querySelector('[data-role="vmax"]').value);
         if (!isFinite(vmin) || !isFinite(vmax)) { toast("Vul Vmin en Vmax in", "err"); return; }
         if (vmin > vmax) { toast("Vmin mag niet groter zijn dan Vmax", "err"); return; }
-        doAction(id, "set_vminmax", { vmin, vmax });
+        const unit = c.querySelector('[data-role="vminunit"]');
+        if (unit && unit.textContent.includes("m³/h")) {
+          // absolute grenzen: de server rekent met qnom terug naar % van Vnom
+          doAction(id, "set_vminmax", { vmin_flow: vmin, vmax_flow: vmax });
+        } else {
+          doAction(id, "set_vminmax", { vmin, vmax });
+        }
         return;
       }
       if (e.target.closest('[data-act="setvmax"]')) {
