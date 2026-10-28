@@ -557,10 +557,14 @@ class App:
             row = {"type": o["type"], "inst": o["inst"], "abbr": o["abbr"],
                    "name": "", "value": None, "unit": "", "ok": False, "error": None}
             try:
-                row["name"] = client.read_property(ip, o["type"], o["inst"], bacnet.PROP_OBJECT_NAME) or ""
+                name = client.read_property(ip, o["type"], o["inst"], bacnet.PROP_OBJECT_NAME) or ""
+                # Legacy-toestellen leveren de naam met een leidende NUL
+                row["name"] = str(name).replace("\x00", "").strip()
             except bacnet.BacnetError:
                 pass
-            if o["type"] == 8:                     # device-object heeft geen present-value
+            if o["type"] not in bacnet.PV_OBJECT_TYPES:
+                # device, file, group, trend-log, vendor-types: geen present-value.
+                # Een error opvragen zou hier een fout tonen die er geen is.
                 row["ok"] = True
             else:
                 try:

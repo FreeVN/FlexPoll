@@ -25,13 +25,25 @@ MAX_APDU_RESP = 0x05
 OBJ_TYPES = {
     0: "analog-input", 1: "analog-output", 2: "analog-value",
     3: "binary-input", 4: "binary-output", 5: "binary-value",
-    8: "device", 13: "multi-state-input", 14: "multi-state-output",
-    19: "multi-state-value",
+    6: "calendar", 7: "command", 8: "device", 9: "event-enrollment",
+    10: "file", 11: "group", 12: "loop", 13: "multi-state-input",
+    14: "multi-state-output", 15: "notification-class", 16: "program",
+    17: "schedule", 18: "averaging", 19: "multi-state-value",
+    20: "trend-log", 21: "life-safety-point", 22: "life-safety-zone",
+    23: "accumulator", 24: "pulse-converter",
 }
 OBJ_ABBR = {
     0: "AI", 1: "AO", 2: "AV", 3: "BI", 4: "BO", 5: "BV",
-    8: "DEV", 13: "MSI", 14: "MSO", 19: "MSV",
+    6: "CAL", 7: "CMD", 8: "DEV", 9: "EE", 10: "FILE", 11: "GRP",
+    12: "LOOP", 13: "MSI", 14: "MSO", 15: "NC", 16: "PRG", 17: "SCH",
+    18: "AVG", 19: "MSV", 20: "TL", 21: "LSP", 22: "LSZ",
+    23: "ACC", 24: "PC",
 }
+
+# Niet elk objecttype heeft een present-value. Bij de rest (file, group, trend-log,
+# notification-class, vendor-types) is een leesactie op 85 gegarandeerd een error —
+# dat is geen storing en hoort dus niet als fout op de kaart te staan.
+PV_OBJECT_TYPES = {0, 1, 2, 3, 4, 5, 13, 17, 19, 21, 22, 23, 24}
 
 UNITS = {
     0: "square-meters", 3: "amperes", 5: "volts", 19: "kilowatt-hours", 27: "hertz",
