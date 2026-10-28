@@ -32,8 +32,12 @@ class SimBus:
         self.regs[(6, 102)] = 0x5E6F
         self.regs[(6, 103)] = 308
         self.regs[(6, 110)] = 250
-        self.regs[(6, 105)] = 0        # Vmin 0 %
-        self.regs[(6, 106)] = 10000    # Vmax 100 %
+        self.regs[(6, 105)] = 2000     # Vmin 20 %
+        self.regs[(6, 106)] = 8000     # Vmax 80 %
+        self.regs[(6, 108)] = 0        # bus-failstand: laatste setpunt
+        self.regs[(6, 116)] = 1        # regelmodus: debietsturing
+        self.regs[(6, 117)] = 1        # eenheid: m³/h
+        self.regs[(6, 118)] = 1        # setpuntbron: bus
         self.regs[(7, 100)] = 1
         self.regs[(7, 101)] = 6
         self.regs[(7, 102)] = 0
@@ -133,7 +137,7 @@ class SimBus:
                 vals[6] = self._tick(7800, 400, 30)
                 vals[7] = int(vals[6] * 2.5 / 100)
                 return vals[:qty]
-            if 100 <= start <= 112:
+            if 100 <= start <= 118:
                 return [self.regs.get((6, start + i), 0) for i in range(qty)]
             raise ModbusException(2)
         if addr == 7:
