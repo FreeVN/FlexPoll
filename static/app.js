@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: AGPL-3.0-only — Copyright 2026 Gezel HVAC+ (https://gezel.be) */
+/* SPDX-License-Identifier: AGPL-3.0-only — Copyright 2026 Free van Nieuwenhove */
 /* FlexPoll — frontend */
 (() => {
   "use strict";
@@ -218,7 +218,7 @@
       : (bus.port ? bus.port.split("/").pop() : "geen poort");
     $("#modcount").textContent = `${mods.length} module${mods.length === 1 ? "" : "s"}`;
     $("#empty").style.display = mods.length ? "none" : "grid";
-    if (s.scanning && s.scan_progress) {
+    if (activeTab === "rtu" && s.scanning && s.scan_progress) {
       const bar = $("#scanbar");
       bar.className = "scanbar show";
       bar.innerHTML = `<span class="lbl">Scannen</span><span class="scanhit">adres ${s.scan_progress.current} van ${s.scan_progress.end}…</span>`;
@@ -1336,7 +1336,13 @@
     document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === activeTab));
     const isBn = activeTab === "bacnet";
     if (isBn) bnInit();
-    $("#busbar").style.display = activeTab === "rtu" ? "" : "none";
+    // De busbar én de scanresultaten horen bij de RS-485-lijn: op de TCP- en
+    // BACnet-tab is een "gevonden op adres 5" of een framingscan over RS-485
+    // ronduit misleidend. Het scanbereik zit in de busbar, de resultaten in
+    // #scanbar — die moet dus mee verborgen worden.
+    const rtuTab = activeTab === "rtu";
+    $("#busbar").style.display = rtuTab ? "" : "none";
+    $("#scanbar").style.display = rtuTab ? "" : "none";
     $("#bacnet-panel").hidden = !isBn;
     $("#bacnet-panel").style.display = isBn ? "" : "none";
     document.querySelector(".canvas-panel").style.display = isBn ? "none" : "";

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright 2026 Gezel HVAC+ (https://gezel.be)
+# Copyright 2026 Free van Nieuwenhove
 """FlexPoll — grafische testbank voor Modbus RTU, Modbus TCP/IP en BACnet/IP (Siemens EM1.8x, Belimo VAV,
 Grundfos CIM 200. Draait zonder externe web-framework dependencies.
 

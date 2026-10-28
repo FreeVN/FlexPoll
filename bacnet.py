@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright 2026 Gezel HVAC+ (https://gezel.be)
+# Copyright 2026 Free van Nieuwenhove
 """Minimale BACnet/IP-client (Who-Is, ReadProperty, WriteProperty) — enkel stdlib.
 
 Bewust beperkt: unicast naar één toestel per keer, geen routing, geen
@@ -727,7 +727,7 @@ class BacnetClient:
             _ede_row(["PROJECT_NAME", _ede_clean(project or prefix)]),
             _ede_row(["VERSION_OF_REFERENCEFILE", "1"]),
             _ede_row(["TIMESTAMP_OF_LAST_CHANGE", time.strftime("%d.%m.%Y %H:%M:%S")]),
-            _ede_row(["AUTHOR_OF_LAST_CHANGE", _ede_clean(author or "Gezel HVAC+ Modbus Lab")]),
+            _ede_row(["AUTHOR_OF_LAST_CHANGE", _ede_clean(author or "FlexPoll")]),
             _ede_row(["VERSION_OF_LAYOUT", EDE_LAYOUT]),
             _ede_row(["#" + ("mandatory" if EDE_COLUMNS[0][1] else "optional")]
                      + ["mandatory" if m else "optional" for _, m in EDE_COLUMNS[1:]]),

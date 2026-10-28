@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright 2026 Gezel HVAC+ (https://gezel.be)
+# Copyright 2026 Free van Nieuwenhove
 """Minimale Modbus TCP-master (MBAP) met dezelfde interface als modbus_rtu.Bus.
 
 Alleen wat de testbank nodig heeft: FC1/2/3/4/5/6/16, één verbinding per

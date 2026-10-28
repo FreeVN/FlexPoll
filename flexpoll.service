@@ -1,6 +1,5 @@
 [Unit]
-Description=FlexPoll — Modbus RTU / TCP / BACnet testbank (Gezel HVAC+)
-Documentation=https://gezel.be/
+Description=FlexPoll — Modbus RTU / TCP / BACnet Diagnostic Suite
 After=network-online.target
 Wants=network-online.target
 

@@ -1,5 +1,5 @@
 FlexPoll
-Copyright 2026 Gezel HVAC+ (https://gezel.be)
+Copyright 2026 Free van Nieuwenhove
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU Affero General Public License as published by the Free
@@ -11,18 +11,15 @@ a modified version and let other users interact with it over a network, you must
 offer those users the Corresponding Source of your modified version. Internal
 use within a single organisation is not conveyance.
 
-The license above does NOT grant any right to use the trade names, trademarks,
-service marks or logos of Gezel HVAC+, including but not limited to:
+Attribution: FlexPoll is built by Free van Nieuwenhove, with the help of Luc
+(AI pair programmer).
 
-  - "Gezel"
-  - "Gezel HVAC+"
-  - "FlexPoll"
-  - the Gezel logo (static/gezel-logo.png)
-  - the FlexPoll shield logo (static/flexpoll-icon.png, static/flexpoll-logo.png)
-
-Redistribution of the code under a different product name is allowed, provided
-the marks above are removed or replaced and the modified source stays available
-under the AGPL. See section 7(e) of the license.
+The license above does NOT grant any right to use the trade name, trademark,
+service mark or logo "FlexPoll" or the FlexPoll shield logo
+(static/flexpoll-icon.png, static/flexpoll-logo.png). Redistribution of the code
+under a different product name is allowed, provided those marks are removed or
+replaced and the modified source stays available under the AGPL. See section
+7(e) of the license.
 
 Third-party data: the register and object tables in devices.py are compiled from
 publicly available vendor documentation (Siemens, Belimo, Grundfos, Wilo, LG,

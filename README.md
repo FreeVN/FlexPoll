@@ -1,8 +1,8 @@
 # FlexPoll
 
 **Modbus & BACnet Diagnostic Suite** — een grafische testbank voor de werkbank en de werf.
-Gebouwd door [Gezel HVAC+](https://gezel.be) voor het uitmeten van RS-485-bussen,
-Modbus TCP-koppelingen en BACnet/IP-installaties.
+Gemaakt door **Free van Nieuwenhove**, met de hulp van **Luc** (AI-copiloot), voor
+het uitmeten van RS-485-bussen, Modbus TCP-koppelingen en BACnet/IP-installaties.
 
 FlexPoll is bewust **stand-alone**: geen cloud, geen abonnement, geen LLM, geen
 externe API's. Eén Python-proces met een browser als front-end.
@@ -68,5 +68,5 @@ Let op wat dat betekent: FlexPoll wordt over het netwerk geserveerd, dus
 interageren, moet hen de broncode van die gewijzigde versie aanbieden.
 Intern gebruik binnen één bedrijf is geen verspreiding.
 
-De namen **Gezel**, **Gezel HVAC+** en **FlexPoll**, en de bijbehorende logo's,
-vallen **niet** onder die licentie (AGPL §7(e)). Zie `NOTICE`.
+De naam **FlexPoll** en het bijbehorende schild-logo vallen **niet** onder die
+licentie (AGPL §7(e)). Zie `NOTICE`.
