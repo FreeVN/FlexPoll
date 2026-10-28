@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright 2026 Gezel HVAC+ (https://gezel.be)
+# Copyright 2026 Free van Nieuwenhove
 """Minimal BACnet/IP test slave (stdlib) — om de client end-to-end te testen.
 
 Serveert één device 1234 met een handvol objecten, incluised de object-list array,
@@ -19,7 +19,7 @@ VENDOR = 999
 
 # (type, instance) -> properties
 DEVS = {
-    (8, DEVICE): {77: "Gezel-Test-Device", 70: "Testbank", 120: 999, 121: 8, 44: 2},
+    (8, DEVICE): {77: "FlexPoll-Test-Device", 70: "Testbank", 120: 999, 121: 8, 44: 2},
     (0, 1): {77: "Buiten temperatuur", 28: "Test AI", 85: 12.5, 117: 62},
     (1, 1): {77: "Kleppositie", 28: "Test AO", 85: 45.0, 117: 98},
     (2, 1): {77: "Setpunt", 28: "Test AV", 85: 21.0, 117: 62, 17: 1},

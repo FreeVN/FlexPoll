@@ -1,0 +1,29 @@
+name: Voorstel
+description: Een module, transport of functie die ontbreekt.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welk probleem lost dit op?
+      description: Beschrijf de situatie op de werf, niet enkel de oplossing.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Voorstel
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Om welk toestel/registerbereik gaat het?
+      placeholder: "Merk, type, firmware, handleiding of registermap"
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Past dit bij de belofte van het project?
+      options:
+        - label: Dit kan zonder nieuwe dependencies buiten Python-stdlib + pyserial.
+        - label: Dit kan zonder cloud, account of externe API.

@@ -27,6 +27,21 @@ import devices
 from devices import ActionError, TYPES
 from modbus_rtu import Bus, BusDown, ModbusError, ModbusException, ModbusTimeout
 
+
+def _read_version() -> str:
+    """Versie uit het VERSION-bestand naast dit script — één bron van waarheid
+    voor UI, `--version` en de git-tag. Ontbreekt het bestand (bv. ingebedde
+    kopie), dan blijft de app bruikbaar maar zegt ze het eerlijk."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(here, "VERSION"), encoding="utf-8") as fh:
+            return fh.read().strip() or "0.0.0-dev"
+    except OSError:
+        return "0.0.0-dev"
+
+
+APP_VERSION = _read_version()
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -625,6 +640,7 @@ class App:
                 "now": now(),
                 "log": list(self.log)[:60],
                 "simulate": self.simulate,
+                "version": APP_VERSION,
             }
 
     # ------------------------------------------------------------------ actions
@@ -1091,6 +1107,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8099)
     parser.add_argument("--simulate", action="store_true")
+    parser.add_argument("--version", action="version", version=f"FlexPoll {APP_VERSION}")
     args = parser.parse_args()
 
     simulate = args.simulate or os.environ.get("MODBUS_SIM") == "1"

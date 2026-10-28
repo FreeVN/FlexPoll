@@ -114,6 +114,10 @@
 
   function applyState(s) {
     state = s;
+    if (s.version) {
+      const v = $("#appver");
+      if (v) v.textContent = "v" + s.version;
+    }
     renderBus(s.bus);
     renderTopology(s.modules);
     updateModules(s.modules);

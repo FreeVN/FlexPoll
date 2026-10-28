@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntaxis (Python + JS)
+        run: |
+          python -m compileall -q app.py devices.py modbus_rtu.py modbus_tcp.py \
+            bacnet.py sim.py modbus_tcp_slave.py tests
+          node --check static/app.js
+
+      - name: Versie consistent (VERSION = --version = CHANGELOG)
+        run: |
+          v="$(cat VERSION)"
+          test "$(python app.py --version)" = "FlexPoll $v" \
+            || { echo "VERSION ($v) wijkt af van --version"; exit 1; }
+          grep -q "^## \[$v\]" CHANGELOG.md \
+            || { echo "CHANGELOG mist een kop voor $v"; exit 1; }
+          echo "versie $v ok"
+
+      - name: Licentieheaders
+        run: |
+          missend="$(git ls-files '*.py' '*.js' '*.css' \
+            | xargs grep -L 'SPDX-License-Identifier: AGPL-3.0-only' || true)"
+          if [ -n "$missend" ]; then
+            echo "SPDX-header ontbreekt in:"; echo "$missend"; exit 1
+          fi
+
+      - name: Geen persoonsgegevens in de repo
+        run: |
+          # De config met werf-IP's hoort nooit in de repo, ook niet per ongeluk.
+          if git ls-files | grep -q '^data/'; then
+            echo "data/ staat in de repo"; exit 1
+          fi
+
+      - name: Smoke test tegen de simulator
+        run: python scripts/smoke.py --port 0

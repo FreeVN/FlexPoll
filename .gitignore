@@ -1,7 +1,22 @@
+# Opstelling: poorten, IP's en modulelijsten van de werf. Nooit publiceren.
 data/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
 venv/
+.pytest_cache/
+.ruff_cache/
+
+# Lokaal test- en releasegerief
 *.log
+*.bak
+.smoke.pid
+state.json
+/opt/flexpoll.bak-*/
+
+# Editors en OS
 .DS_Store
+.idea/
+.vscode/

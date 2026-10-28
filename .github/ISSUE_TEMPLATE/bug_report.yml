@@ -1,0 +1,62 @@
+name: Bug
+description: Iets werkt niet zoals het zou moeten.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Een veldbus-fout oplossen zonder de bus te zien is gokken. Hoe meer
+        feiten, hoe sneller het gefixt is. **Geen klantgegevens, IP-adressen of
+        volledige configuraties posten** — maskeer ze.
+  - type: input
+    id: version
+    attributes:
+      label: Versie
+      description: "`python3 app.py --version` of de footer van de UI"
+      placeholder: "FlexPoll 1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options:
+        - Modbus RTU (RS-485)
+        - Modbus TCP/IP
+        - BACnet/IP
+        - Meerdere / weet niet
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Toestel (indien van toepassing)
+      placeholder: "Siemens EM1.8U, FW 3.04 — of 'simulator'"
+  - type: textarea
+    id: expected
+    attributes:
+      label: Wat verwachtte je?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Wat gebeurt er?
+      description: Liefst met de exacte foutmelding of uitzondering uit de buslog.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Stappen om te reproduceren
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Controle
+      options:
+        - label: Ik heb op de simulator of een testslave geprobeerd en het probleem blijft.
+        - label: Ik heb de logs gecontroleerd (`journalctl -u flexpoll` of de loglade in de UI).

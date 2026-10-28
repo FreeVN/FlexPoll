@@ -1,0 +1,2 @@
+# FlexPoll draait op de Python-stdlib; enkel de seriële poort vraagt pyserial.
+pyserial>=3.5
