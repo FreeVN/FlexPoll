@@ -2,9 +2,10 @@
 # Copyright 2026 Free van Nieuwenhove
 #
 # FlexPoll als container. De config hoort in een volume, anders ben je bij elke
-# recreate je opstelling kwijt:
+# recreate je opstelling kwijt. Draai vanuit de repo-root (de context is de
+# repo, niet deze map):
 #
-#   docker build -t flexpoll .
+#   docker build -f docker/Dockerfile -t flexpoll .
 #   docker run -d --name flexpoll -p 8099:8099 \
 #     --device /dev/ttyUSB0 --group-add dialout \
 #     -v flexpoll-data:/data flexpoll

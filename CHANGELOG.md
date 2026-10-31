@@ -35,6 +35,14 @@ voor de UI, `python3 app.py --version` en de git-tag.
 - **Ingepakte builds openen de browser zelf**; `--no-browser` zet dat uit.
 - De opstartregel toont nu de versie én het pad van de configuratie.
 
+### Changed
+
+- **Docker-bestanden naar `docker/`.** `Dockerfile` en `docker-compose.yml`
+  staan niet meer in de root, zodat de repo bovenaan leesbaar blijft. De
+  build-context blijft de repo-root (`.dockerignore` hoort daar en blijft daar):
+  `docker build -f docker/Dockerfile .` of
+  `docker compose -f docker/docker-compose.yml up -d`.
+
 ### Fixed
 
 - **Geen hostnaam meer in de HTML-bron.** De `#hostinfo`-placeholder stond hard

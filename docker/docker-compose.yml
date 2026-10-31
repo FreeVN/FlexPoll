@@ -1,12 +1,18 @@
 # FlexPoll naast je andere containers. Pas `devices:` aan naar jouw adapter.
 #
-#   docker compose up -d
+#   docker compose -f docker/docker-compose.yml up -d
 #
 # De USB-RS485-adapter vind je met `ls -l /dev/serial/by-id/`. Gebruik bij
 # voorkeur dat pad: /dev/ttyUSB0 verspringt wanneer je iets anders inplugt.
+#
+# De build-context is de repo-root (`..`), niet deze map: de Dockerfile kopieert
+# app.py, static/ en VERSION vanaf de root. `context` is relatief aan dít
+# bestand, dus zowel `-f docker/docker-compose.yml` als `cd docker` werkt.
 services:
   flexpoll:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: flexpoll:latest
     container_name: flexpoll
     restart: unless-stopped

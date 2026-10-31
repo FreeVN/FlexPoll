@@ -134,6 +134,8 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          # De Dockerfile staat in docker/; de context blijft de repo-root.
+          file: docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

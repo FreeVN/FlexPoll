@@ -1,3 +1,5 @@
+# Moet in de repo-root staan: Docker leest dit bestand naast de build-context,
+# niet naast de Dockerfile (die staat in docker/).
 .git
 .github
 .venv

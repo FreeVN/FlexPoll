@@ -61,10 +61,18 @@ sudo usermod -aG dialout "$USER" && sudo systemctl restart flexpoll
 docker run -d --name flexpoll -p 8099:8099 \
   --device /dev/serial/by-id/usb-FTDI_...-if00-port0:/dev/ttyUSB0 \
   --group-add dialout -v flexpoll-data:/data \
-  ghcr.io/fvannieuwenhove/flexpoll:latest
+  ghcr.io/freevn/flexpoll:latest
 ```
 
-Of `docker compose up -d` met de meegeleverde [`docker-compose.yml`](docker-compose.yml).
+Of met compose: `docker compose -f docker/docker-compose.yml up -d` — de
+[`docker-compose.yml`](docker/docker-compose.yml) staat in `docker/`, net als de
+[`Dockerfile`](docker/Dockerfile). De build-context blijft de repo-root, dus zelf
+bouwen gaat met:
+
+```bash
+docker build -f docker/Dockerfile -t flexpoll .
+```
+
 Voor BACnet/IP-discovery heb je `--network host` nodig: UDP-broadcast over een
 brug gaat de deur niet uit.
 
@@ -132,7 +140,7 @@ tegenpartijen voor de TCP- en BACnet-tab.
 | `scripts/smoke.py` | rooktest tegen de simulator (ook in CI) |
 | `scripts/deploy.sh` | deploy naar een remote host (tar over ssh) |
 | `flexpoll.spec` | PyInstaller-recept voor de zelfstandige builds |
-| `Dockerfile`, `docker-compose.yml` | container-image met volume voor `data/` |
+| `docker/Dockerfile`, `docker/docker-compose.yml` | container-image met volume voor `data/` (`.dockerignore` blijft in de root: die hoort bij de context) |
 
 ## Ontwikkelen
 

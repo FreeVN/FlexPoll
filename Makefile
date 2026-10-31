@@ -53,7 +53,7 @@ dist:
 	@echo "klaar: dist/FlexPoll/"
 
 docker:
-	docker build -t flexpoll:$(shell cat VERSION) -t flexpoll:latest .
+	docker build -f docker/Dockerfile -t flexpoll:$(shell cat VERSION) -t flexpoll:latest .
 	@echo "gereden: docker run --rm -p 8099:8099 flexpoll:latest"
 
 clean:
