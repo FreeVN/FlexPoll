@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-31
+
 ### Added
 
 - **Linux arm64-build.** De release-matrix bouwt nu ook `linux-arm64` op
