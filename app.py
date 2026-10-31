@@ -1041,7 +1041,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bacnet/subnets":
             import bacnet
 
-            return self._json(200, {"broadcasts": bacnet.local_broadcasts()})
+            nets = bacnet.local_broadcasts()
+            return self._json(200, {"broadcasts": nets, "source": bacnet.LAST_SOURCE})
         if path == "/api/bacnet/whois":
             q = parse_qs(urlparse(self.path).query)
             subnet = (q.get("subnet") or [""])[0]

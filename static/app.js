@@ -1240,7 +1240,7 @@
       if (!$("#bn-subnet").value && nets.length) $("#bn-subnet").value = nets[0];
       $("#bn-hint").textContent = nets.length
         ? `deze machine: ${nets.join(", ")}`
-        : "geen IPv4-interface gevonden";
+        : "geen IPv4-interface gevonden — vul het broadcastadres zelf in (bv. 192.168.1.255)";
     } catch (err) {
       $("#bn-hint").textContent = "";
     }

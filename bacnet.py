@@ -13,6 +13,7 @@ import random
 import re
 import socket
 import struct
+import sys
 import time
 
 BACNET_PORT = 47808
@@ -230,35 +231,151 @@ UNIT_SYMBOLS = {
 }
 
 
+LAST_SOURCE = ""
+
+
+def _subnet_broadcast(addr: str, mask) -> str | None:
+    """Broadcastadres uit een IPv4-adres en een masker (bits of dotted-notatie)."""
+    try:
+        if isinstance(mask, str):
+            if mask.startswith("0x"):
+                bits = bin(int(mask, 16)).count("1")
+            elif "." in mask:
+                bits = bin(struct.unpack(">I", socket.inet_aton(mask))[0]).count("1")
+            else:
+                bits = int(mask)
+        else:
+            bits = int(mask)
+    except (TypeError, ValueError, OSError):
+        return None
+    if bits <= 0 or bits >= 31:          # /0, /31 en /32 hebben geen broadcast
+        return None
+    if addr.startswith(("127.", "169.254.")):
+        return None
+    try:
+        ip_int = struct.unpack(">I", socket.inet_aton(addr))[0]
+        nm = (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF
+        return socket.inet_ntoa(struct.pack(">I", (ip_int & nm) | (~nm & 0xFFFFFFFF)))
+    except OSError:
+        return None
+
+
+def _from_psutil() -> list[str]:
+    """psutil staat niet in de requirements, maar is wel de nette bron als hij er is."""
+    import psutil                                  # noqa: PLC0415
+
+    out = []
+    for addrs in psutil.net_if_addrs().values():
+        for a in addrs:
+            if a.family == socket.AF_INET and a.netmask:
+                b = _subnet_broadcast(a.address, a.netmask)
+                if b:
+                    out.append(b)
+    return out
+
+
+def _from_windows() -> list[str]:
+    """Windows: IPHLPAPI→GetIpAddrTable. `ip` bestaat daar niet, dus de oude
+    aanpak gaf altijd een lege lijst — en dus "geen IPv4-interface gevonden"."""
+    import ctypes                                    # noqa: PLC0415
+
+    class Row(ctypes.Structure):
+        _fields_ = [("dwAddr", ctypes.c_uint32), ("dwIndex", ctypes.c_uint32),
+                    ("dwMask", ctypes.c_uint32), ("dwBCastAddr", ctypes.c_uint32),
+                    ("dwReasmSize", ctypes.c_uint32),
+                    ("unused1", ctypes.c_uint16), ("unused2", ctypes.c_uint16)]
+
+    class Table(ctypes.Structure):
+        _fields_ = [("dwNumEntries", ctypes.c_uint32), ("table", Row * 1)]
+
+    iphlpapi = ctypes.WinDLL("iphlpapi.dll")                     # type: ignore[attr-defined]
+    size = ctypes.c_ulong(0)
+    iphlpapi.GetIpAddrTable(None, ctypes.byref(size), False)
+    if size.value == 0:
+        return []
+    buf = ctypes.create_string_buffer(size.value)
+    if iphlpapi.GetIpAddrTable(buf, ctypes.byref(size), False) != 0:
+        return []
+    tbl = ctypes.cast(buf, ctypes.POINTER(Table)).contents
+    rows = ctypes.cast(ctypes.byref(tbl.table),
+                       ctypes.POINTER(Row * tbl.dwNumEntries)).contents
+    out = []
+    for r in rows:
+        # De velden staan in netwerkbytevolgorde; native unpacken geeft het juiste adres.
+        addr = socket.inet_ntoa(struct.pack("=I", r.dwAddr))
+        b = _subnet_broadcast(addr, bin(r.dwMask).count("1"))
+        if b:
+            out.append(b)
+    return out
+
+
+def _from_ip_command() -> list[str]:
+    import subprocess                                 # noqa: PLC0415
+
+    raw = subprocess.check_output(["ip", "-4", "-o", "addr", "show"],
+                                  timeout=3, stderr=subprocess.DEVNULL).decode()
+    out = []
+    for line in raw.splitlines():
+        for token in line.split():
+            if token.count(".") == 3 and "/" in token:
+                addr, _, mask = token.partition("/")
+                b = _subnet_broadcast(addr, mask)
+                if b:
+                    out.append(b)
+    return out
+
+
+def _from_ifconfig() -> list[str]:
+    """macOS/BSD: `ip` ontbreekt, `ifconfig` is er wel. Formaat:
+    `inet 192.168.1.34 netmask 0xffffff00 broadcast 192.168.1.255`."""
+    import subprocess                                 # noqa: PLC0415
+
+    raw = subprocess.check_output(["ifconfig"], timeout=3,
+                                  stderr=subprocess.DEVNULL).decode(errors="replace")
+    out = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("inet "):
+            continue
+        addr = line.split()[1]
+        m = re.search(r"netmask\s+(\S+)", line)
+        if not m:
+            continue
+        b = _subnet_broadcast(addr, m.group(1))
+        if b:
+            out.append(b)
+    return out
+
+
 def local_broadcasts() -> list[str]:
     """Broadcast-adressen van de eigen interfaces (IPv4), afgeleid uit ip/mask.
 
-    Zo blijft Who-Is werken als de Pi op de werf in een andere DHCP-range staat.
+    Zo blijft Who-Is werken als de doos op de werf in een andere DHCP-range staat.
+    Meerdere bronnen, in volgorde van betrouwbaarheid: psutil (als het geïnstalleerd
+    is), dan de OS-eigen manier. De oude versie leunde enkel op `ip`, wat op Windows
+    én macOS niet bestaat — daar bleef de lijst leeg en leek er geen interface te zijn.
     """
-    out: list[str] = []
-    try:
-        import subprocess
+    global LAST_SOURCE
 
-        raw = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], timeout=3).decode()
-    except Exception:                                   # noqa: BLE001
-        return out
-    for line in raw.splitlines():
-        parts = line.split()
-        for token in parts:
-            if "/" in token and token.count(".") == 3:
-                addr, _, mask = token.partition("/")
-                try:
-                    bits = int(mask)
-                    if bits >= 31:                    # /31 en /32 hebben geen broadcast
-                        continue
-                    ip_int = struct.unpack(">I", socket.inet_aton(addr))[0]
-                    netmask = (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF if bits else 0
-                    bcast = socket.inet_ntoa(struct.pack(">I", (ip_int & netmask) | (~netmask & 0xFFFFFFFF)))
-                except (OSError, ValueError):
-                    continue
-                if bcast not in out and not addr.startswith("127."):
-                    out.append(bcast)
-    return out
+    strategies = [("psutil", _from_psutil)]
+    if sys.platform.startswith("win"):
+        strategies.append(("iphlpapi", _from_windows))
+    strategies += [("ip", _from_ip_command), ("ifconfig", _from_ifconfig)]
+
+    for name, fn in strategies:
+        try:
+            found = [b for b in fn() if b]
+        except Exception:                            # noqa: BLE001 — bron niet beschikbaar
+            continue
+        if found:
+            uniq: list[str] = []
+            for b in found:
+                if b not in uniq:
+                    uniq.append(b)
+            LAST_SOURCE = name
+            return uniq
+    LAST_SOURCE = ""
+    return []
 
 
 def _obj_id(obj_type: int, instance: int) -> bytes:

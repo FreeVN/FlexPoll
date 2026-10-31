@@ -24,6 +24,14 @@ check:
 	$(PY) -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read(),f) for f in sys.argv[1:]]" \
 		app.py devices.py modbus_rtu.py modbus_tcp.py bacnet.py sim.py modbus_tcp_slave.py tests/bacnet_slave.py
 	node --check static/app.js
+	@$(PY) -c "import bacnet as b; \
+	assert b._subnet_broadcast('192.168.20.219','24')=='192.168.20.255'; \
+	assert b._subnet_broadcast('10.1.2.3','255.255.0.0')=='10.1.255.255'; \
+	assert b._subnet_broadcast('192.168.1.34','0xffffff00')=='192.168.1.255'; \
+	assert b._subnet_broadcast('10.0.0.5','32') is None; \
+	assert b._subnet_broadcast('127.0.0.1','8') is None; \
+	assert b._subnet_broadcast('169.254.3.4','16') is None; \
+	print('subnet-helper ok')"
 	@v=$$(cat VERSION); \
 	  test "$$($(PY) app.py --version)" = "FlexPoll $$v" || { echo "VERSION wijkt af van --version"; exit 1; }; \
 	  grep -q "^## \[$$v\]" CHANGELOG.md || { echo "CHANGELOG mist $$v"; exit 1; }; \

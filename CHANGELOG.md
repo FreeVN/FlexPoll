@@ -25,6 +25,18 @@ voor de UI, `python3 app.py --version` en de git-tag.
   waarop mensen zoeken: modbus, modbus-rtu, bacnet, bacnet-ip, rs485, fieldbus,
   hvac, building-automation, diagnostic-tool.
 
+### Fixed
+
+- **BACnet/IP op Windows (en macOS) vond geen interfaces.** `local_broadcasts()`
+  schraapte enkel de Linux-uitvoer van `ip -4 -o addr show`; die bestaat niet op
+  Windows, dus de lijst bleef leeg en de UI zei *"geen IPv4-interface gevonden"*
+  terwijl de netwerkkaart er gewoon was. Gevolg: Who-Is ging alleen naar
+  255.255.255.255 en vond niets. Nu meerdere bronnen: `psutil` als het er is,
+  Windows via `GetIpAddrTable` (IPHLPAPI, ctypes, geen extra dependency), Linux
+  via `ip`, en macOS/BSD via `ifconfig`. Loopback, link-local (169.254/16) en
+  /31-/32-maskers worden overgeslagen. `/api/bacnet/subnets` meldt nu ook welke
+  bron gebruikt is.
+
 ## [1.2.0] — 2026-10-31
 
 ### Added
