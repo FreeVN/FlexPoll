@@ -70,7 +70,7 @@ brug gaat de deur niet uit.
 
 ### Zelfstandige build (Windows .exe, Linux, macOS)
 
-Download de zip/tar van de [releases](https://github.com/fvannieuwenhove/flexpoll/releases),
+Download de zip/tar van de [releases](https://github.com/FreeVN/FlexPoll/releases),
 pak uit en start `FlexPoll/flexpoll` (Windows: `flexpoll.exe`). Er is geen Python
 nodig; de browser opent vanzelf. De config komt in je gegevensmap
 (`%APPDATA%\FlexPoll`, `~/Library/Application Support/FlexPoll`,
