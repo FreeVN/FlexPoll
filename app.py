@@ -118,7 +118,8 @@ def udev_info(dev: str) -> dict:
     return info
 
 
-def list_ports() -> list[dict]:
+def _linux_ports() -> list[dict]:
+    """Linux: by-id-links (stabiel over reboots) + rauwe ttyUSB/ttyACM."""
     ports: list[dict] = []
     seen: set[str] = set()
     for link in sorted(glob.glob("/dev/serial/by-id/*")):
@@ -147,6 +148,55 @@ def list_ports() -> list[dict]:
             "present": True,
         })
     return ports
+
+
+def _comports() -> list[dict]:
+    """Windows (en als vangnet elk ander OS): pyserial's eigen enumeratie.
+
+    Windows levert `COM3` + een beschrijving uit de driver ("USB-SERIAL CH340").
+    Zonder deze tak is de poortlijst op Windows altijd leeg: `glob("/dev/...")`
+    bestaat daar niet. `present` is hier altijd True — een verdwenen COM-poort
+    komt niet in de lijst, en een oude config houdt zijn pad via de UI.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    try:
+        from serial.tools import list_ports as comports
+    except ImportError:          # pyserial ontbreekt: geen poorten, geen crash
+        return out
+    for info in comports.comports():
+        path = (info.device or "").strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        desc = (info.description or "").strip()
+        if desc.lower() in ("n/a", "none"):
+            desc = ""
+        if not desc or desc.lower() == path.lower():
+            desc = os.path.basename(path)
+        # Op Windows is `real` hetzelfde als het pad; de UI toont "label — real",
+        # dus het label blijft de beschrijving (anders staat COM3 er twee keer).
+        out.append({
+            "path": path,
+            "real": path,
+            "label": desc,
+            "detail": (info.hwid or "").strip() or "seriële poort",
+            "present": True,
+        })
+    return out
+
+
+def list_ports() -> list[dict]:
+    """Alle seriële poorten van dit OS, in de vorm die de UI verwacht."""
+    if sys.platform.startswith("linux"):
+        ports = _linux_ports()
+        if ports:
+            return ports
+        # Geen by-id en geen ttyUSB/ttyACM (bv. een exotische driver): pyserial
+        # als vangnet, maar zonder de ttyS0..31-ruis van de moederbordpoorten.
+        return [p for p in _comports()
+                if "ttyS" not in os.path.basename(p["path"])]
+    return _comports()
 
 
 # --------------------------------------------------------------------------- app
@@ -216,7 +266,11 @@ class App:
         ports = list_ports()
         preferred = ""
         for p in ports:
-            if "FTDI" in p["path"] or "FTDI" in p["label"].upper():
+            # FTDI eerst: dat is de adapter die op de bank hangt (VID 0403).
+            # Op Windows staat "FTDI" niet in het pad of de beschrijving, maar
+            # wel in de hwid — vandaar alle velden samen.
+            blob = " ".join(str(p.get(k, "")) for k in ("path", "label", "detail")).upper()
+            if "FTDI" in blob or "0403:" in blob:
                 preferred = p["path"]
                 break
         if not preferred and ports:

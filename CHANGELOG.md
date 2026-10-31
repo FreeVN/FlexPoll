@@ -31,6 +31,18 @@ voor de UI, `python3 app.py --version` en de git-tag.
 - **Ingepakte builds openen de browser zelf**; `--no-browser` zet dat uit.
 - De opstartregel toont nu de versie én het pad van de configuratie.
 
+### Fixed
+
+- **Poortlijst op Windows.** `list_ports()` keek enkel in `/dev/serial/by-id`
+  en `/dev/ttyUSB*`; op Windows bestaat dat pad niet, waardoor de keuzelijst
+  altijd leeg was en een ingepakte `.exe` zonder poort startte. Niet-Linux
+  gebruikt nu `serial.tools.list_ports` (COM-poort + driverbeschrijving), Linux
+  houdt zijn by-id-links en valt alleen bij een lege lijst terug op pyserial
+  (zonder de `ttyS0..31`-ruis).
+- **FTDI-voorkeur** werd gemist wanneer de fabrikant enkel in de hwid stond
+  (Windows: "USB Serial Port" + VID 0403). De voorkeurskeuze kijkt nu naar pad,
+  label én hwid.
+
 ## [1.0.0] — 2026-10-28
 
 Eerste publieke release. FlexPoll is geschreven op de werf en heeft daar op echte
