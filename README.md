@@ -140,6 +140,11 @@ Raspberry Pi OS Bookworm). Op ouder dan dat (bv. Debian 11) gebruik je ook
   zie je geen BACnet-toestellen.
 - Geen `.msi`/installer: het is een map die je uitpakt. Updates = nieuwe zip
   uitpakken; je config in `%APPDATA%` blijft staan.
+- **Liever één bestand?** Er is ook `FlexPoll-vX.Y.Z-windows-x64-onefile.exe`
+  (±9 MB): dubbelklikken en klaar, geen map. Nadeel: hij pakt zich bij elke start
+  uit naar `%TEMP%`, dus reken op 1 à 3 seconden extra opstarttijd, en
+  antivirus/SmartScreen kijkt wantrouwiger naar een ongesigneerde exe die zichzelf
+  uitpakt. Voor vast gebruik op één pc is de zip de betere keuze.
 
 ### macOS (Apple Silicon)
 

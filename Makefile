@@ -60,6 +60,13 @@ dist:
 	$(PY) -m PyInstaller --noconfirm --clean flexpoll.spec
 	@echo "klaar: dist/FlexPoll/"
 
+# Eén bestand in plaats van een map. Enkel zinvol op Windows; daar is het de
+# extra download naast de zip.
+dist-onefile:
+	$(PY) -m pip -q install pyinstaller
+	$(PY) -m PyInstaller --noconfirm --clean flexpoll-onefile.spec
+	@echo "klaar: dist/flexpoll (.exe op Windows)"
+
 docker:
 	docker build -f docker/Dockerfile -t flexpoll:$(shell cat VERSION) -t flexpoll:latest .
 	@echo "gereden: docker run --rm -p 8099:8099 flexpoll:latest"

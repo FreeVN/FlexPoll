@@ -13,6 +13,14 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Windows onefile-exe als extra download.** `flexpoll-onefile.spec` +
+  `make dist-onefile` bouwen dezelfde app als één bestand van ±9 MB; de
+  release-workflow levert het als `FlexPoll-vX.Y.Z-windows-x64-onefile.exe`
+  naast de zip. Sneller even neergezet, maar trager starten (uitpakken naar
+  `%TEMP%`) en meer antivirusruis — de zip blijft de aanbevolen weg.
+
 ## [1.2.1] — 2026-10-31
 
 ### Changed

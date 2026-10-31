@@ -38,6 +38,11 @@ jobs:
           - os: windows-latest
             label: windows-x64
             archive: zip
+          # Zelfde app als één bestand. Aparte job: een onefile-build heeft een
+          # ander spec-bestand en levert een bare .exe in plaats van een zip.
+          - os: windows-latest
+            label: windows-x64-onefile
+            archive: exe
           - os: macos-14
             label: macos-arm64
             archive: zip
@@ -55,12 +60,19 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build (PyInstaller, onedir)
+        if: matrix.archive != 'exe'
         run: pyinstaller --noconfirm --clean flexpoll.spec
+
+      - name: Build (PyInstaller, onefile)
+        if: matrix.archive == 'exe'
+        run: pyinstaller --noconfirm --clean flexpoll-onefile.spec
 
       - name: Versie uit de bundel controleren
         shell: bash
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then BIN="dist/FlexPoll/flexpoll.exe"; else BIN="dist/FlexPoll/flexpoll"; fi
+          if [ "${{ matrix.archive }}" = "exe" ]; then BIN="dist/flexpoll.exe"
+          elif [ "${{ runner.os }}" = "Windows" ]; then BIN="dist/FlexPoll/flexpoll.exe"
+          else BIN="dist/FlexPoll/flexpoll"; fi
           "$BIN" --version
           test "$("$BIN" --version)" = "FlexPoll $(cat VERSION)"
 
@@ -81,12 +93,20 @@ jobs:
             zip -qr "FlexPoll-${GITHUB_REF_NAME}-${{ matrix.label }}.zip" FlexPoll
           fi
 
+      - name: Hernoemen (onefile exe)
+        if: matrix.archive == 'exe'
+        shell: bash
+        run: |
+          mv dist/flexpoll.exe "dist/FlexPoll-${GITHUB_REF_NAME}-${{ matrix.label }}.exe"
+          ls -lh dist/*.exe
+
       - uses: actions/upload-artifact@v7
         with:
           name: flexpoll-${{ matrix.label }}
           path: |
             dist/FlexPoll-*.tar.gz
             dist/FlexPoll-*.zip
+            dist/FlexPoll-*.exe
           if-no-files-found: error
 
   release:
@@ -115,7 +135,7 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
             || gh release create "$GITHUB_REF_NAME" --title "FlexPoll ${GITHUB_REF_NAME#v}" \
                  --notes-file <(sed -n "/## \[${GITHUB_REF_NAME#v}\]/,/^## \[/p" CHANGELOG.md | sed '$d')
-          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print -exec \
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' \) -print -exec \
             gh release upload "$GITHUB_REF_NAME" {} --clobber \;
 
   container:
