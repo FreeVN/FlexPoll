@@ -65,7 +65,7 @@ sudo scripts/install.sh --source        # git clone + venv + pyserial
 sudo scripts/install.sh --update        # zelfde kanaal, nieuwste versie
 sudo scripts/install.sh --uninstall     # service weg, data blijft staan
 sudo FLEXPOLL_PORT=8098 scripts/install.sh   # andere poort
-sudo FLEXPOLL_VERSION=1.1.2 scripts/install.sh   # versie pinnen
+sudo FLEXPOLL_VERSION=1.2.0 scripts/install.sh   # versie pinnen
 ```
 
 Wat het installatiescript **niet** voor je doet: je gebruiker in de
@@ -80,7 +80,7 @@ Handmatig, zonder script: download `FlexPoll-vX.Y.Z-linux-x64.tar.gz` (of
 pak uit en start:
 
 ```bash
-tar xzf FlexPoll-v1.1.2-linux-x64.tar.gz
+tar xzf FlexPoll-v1.2.0-linux-x64.tar.gz
 cd FlexPoll && ./flexpoll --port 8099        # data komt in ~/.local/share/FlexPoll
 ```
 
