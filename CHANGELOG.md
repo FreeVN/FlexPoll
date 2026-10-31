@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-31
+
 ### Added
 
 - **Distributiekanalen.** Naast de broninstallatie nu ook:
