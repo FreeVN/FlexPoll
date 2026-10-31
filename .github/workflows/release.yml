@@ -13,7 +13,7 @@ on:
 permissions:
   contents: write
   packages: write
-  # download-artifact@v4 leest de artifacts via de API; zonder `actions: read`
+  # download-artifact leest de artifacts via de API; zonder `actions: read`
   # faalt de private repo met "Artifact download failed after 5 retries".
   actions: read
 
@@ -25,10 +25,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Linux vastgepind op 22.04 (glibc 2.35), niet `ubuntu-latest`: sinds
+          # oktober 2026 schuift die naar Ubuntu 26 en dan eist de binary glibc
+          # 2.4x — te nieuw voor Debian 12 en Raspberry Pi OS Bookworm (2.36).
+          # Pin bewust: een diagnosetool moet op oude dozen draaien.
+          - os: ubuntu-22.04
             label: linux-x64
             archive: tar.gz
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-22.04-arm
             label: linux-arm64
             archive: tar.gz
           - os: windows-latest
@@ -39,9 +43,9 @@ jobs:
             archive: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -77,7 +81,7 @@ jobs:
             zip -qr "FlexPoll-${GITHUB_REF_NAME}-${{ matrix.label }}.zip" FlexPoll
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: flexpoll-${{ matrix.label }}
           path: |
@@ -93,9 +97,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           # Alleen onze eigen bundels: de buildx-job laat een verborgen
@@ -118,17 +122,17 @@ jobs:
     name: Container (GHCR)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@v6
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
@@ -137,7 +141,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           # De Dockerfile staat in docker/; de context blijft de repo-root.
