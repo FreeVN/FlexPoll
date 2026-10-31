@@ -38,22 +38,84 @@ Modbus TCP/IP and BACnet/IP. Stand-alone: Python standard library plus
 Vier wegen, van licht naar zwaar. Ze leveren allemaal hetzelfde: een web-UI op
 poort 8099 die met je eigen seriële poort en je eigen netwerk praat.
 
-### Linux — één script
+| Platform | Makkelijkste weg | Python nodig? |
+|---|---|---|
+| Linux x86_64 / arm64 (Pi, LXC, pc) | install-script of release-tarball | nee |
+| Windows 10/11 x64 | release-zip met `flexpoll.exe` | nee |
+| macOS (Apple Silicon) | release-zip | nee |
+| Docker (Linux) | image of compose | nee |
+
+### Linux — één commando
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fvannieuwenhove/flexpoll/main/scripts/install.sh \
+curl -fsSL https://raw.githubusercontent.com/FreeVN/FlexPoll/main/scripts/install.sh \
   | sudo bash -s --
-# of, als je de repo al hebt:
-sudo scripts/install.sh              # kloont naar /opt/flexpoll, maakt venv + service
-sudo scripts/install.sh --update     # git pull + herstart
-sudo scripts/install.sh --uninstall  # service weg, data blijft
 ```
 
-Zet je gebruiker in de `dialout`-groep, anders kan de app de adapter niet openen:
+Dat downloadt de **kant-en-klare binary** voor je architectuur uit de nieuwste
+release, zet hem in `/opt/flexpoll`, schrijft een systemd-unit en start de
+service. Geen Python, geen venv. Heeft de doos geen internet of wil je uit de
+bron: `... | sudo bash -s -- --source`.
+
+Opties (ook bruikbaar als je de repo al hebt):
+
+```bash
+sudo scripts/install.sh                 # binary voor deze arch (x64 of arm64)
+sudo scripts/install.sh --source        # git clone + venv + pyserial
+sudo scripts/install.sh --update        # zelfde kanaal, nieuwste versie
+sudo scripts/install.sh --uninstall     # service weg, data blijft staan
+sudo FLEXPOLL_PORT=8098 scripts/install.sh   # andere poort
+sudo FLEXPOLL_VERSION=1.1.2 scripts/install.sh   # versie pinnen
+```
+
+Wat het installatiescript **niet** voor je doet: je gebruiker in de
+`dialout`-groep zetten. Doe dat één keer, anders opent de app de adapter niet:
 
 ```bash
 sudo usermod -aG dialout "$USER" && sudo systemctl restart flexpoll
 ```
+
+Handmatig, zonder script: download `FlexPoll-vX.Y.Z-linux-x64.tar.gz` (of
+`-linux-arm64`) van de [releases](https://github.com/FreeVN/FlexPoll/releases),
+pak uit en start:
+
+```bash
+tar xzf FlexPoll-v1.1.2-linux-x64.tar.gz
+cd FlexPoll && ./flexpoll --port 8099        # data komt in ~/.local/share/FlexPoll
+```
+
+32-bit ARM (armv7, bv. een oude Pi) heeft geen kant-en-klare build — gebruik
+daar `--source`.
+
+### Windows 10/11 (x64)
+
+1. Download `FlexPoll-vX.Y.Z-windows-x64.zip` van de
+   [releases](https://github.com/FreeVN/FlexPoll/releases).
+2. Uitpakken — **niet** in `C:\Program Files` (schrijfrechten), wel bv.
+   `C:\Tools\FlexPoll`.
+3. `flexpoll.exe` dubbelklikken. De console opent, de browser gaat vanzelf naar
+   `http://127.0.0.1:8099`.
+
+- De config komt in `%APPDATA%\FlexPoll`, niet naast de exe. Overschrijven kan met
+  de omgevingsvariabele `FLEXPOLL_DATA`.
+- **SmartScreen**: de build is niet ondertekend. "Meer informatie" → "Toch
+  uitvoeren". Wil je die waarschuwing niet, gebruik dan Docker of de
+  broninstallatie.
+- **USB-driver**: FTDI werkt out-of-the-box. CH340/CP210x hebben een driver van
+  de fabrikant nodig (WCH/Silicon Labs); zonder driver verschijnt er geen COM-poort.
+- **Firewall**: bij de eerste start vraagt Windows om toestemming voor poorten
+  8099 (UI) en 47808/UDP (BACnet). Weiger je dat, dan werkt de UI lokaal maar
+  zie je geen BACnet-toestellen.
+- Geen `.msi`/installer: het is een map die je uitpakt. Updates = nieuwe zip
+  uitpakken; je config in `%APPDATA%` blijft staan.
+
+### macOS (Apple Silicon)
+
+Download `FlexPoll-vX.Y.Z-macos-arm64.zip`, pak uit en start `FlexPoll/flexpoll`
+vanuit Terminal. De build is niet genotariseerd: macOS blokkeert de eerste start,
+rechtsklik → **Open**, of `xattr -dr com.apple.quarantine FlexPoll`. De config
+komt in `~/Library/Application Support/FlexPoll`. Intel-Macs hebben nog geen
+build — gebruik daar de broninstallatie.
 
 ### Docker
 
@@ -74,30 +136,13 @@ docker build -f docker/Dockerfile -t flexpoll .
 ```
 
 Voor BACnet/IP-discovery heb je `--network host` nodig: UDP-broadcast over een
-brug gaat de deur niet uit.
+brug gaat de deur niet uit. Het GHCR-image is voorlopig **privé**; bouw lokaal of
+`docker login ghcr.io` met een token dat `read:packages` mag.
 
-### Zelfstandige build (Windows .exe, Linux, macOS)
-
-Download de zip/tar van de [releases](https://github.com/FreeVN/FlexPoll/releases),
-pak uit en start `FlexPoll/flexpoll` (Windows: `flexpoll.exe`). Er is geen Python
-nodig; de browser opent vanzelf. De config komt in je gegevensmap
-(`%APPDATA%\FlexPoll`, `~/Library/Application Support/FlexPoll`,
-`~/.local/share/FlexPoll`), niet naast de binary.
-
-Zelf bouwen:
+### Vanuit de bron (elk platform met Python 3.10+)
 
 ```bash
-make dist     # pyinstaller flexpoll.spec → dist/FlexPoll/
-```
-
-De builds zijn niet ondertekend. Windows SmartScreen zal waarschuwen
-("Meer informatie" → "Toch uitvoeren"), macOS wil rechtsklik → Open. Wil je dat
-niet, gebruik dan de Docker- of script-route.
-
-### Vanuit de source
-
-```bash
-git clone <repo-url> flexpoll && cd flexpoll
+git clone https://github.com/FreeVN/FlexPoll.git flexpoll && cd flexpoll
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python app.py --port 8099
 ```

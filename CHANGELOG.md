@@ -13,6 +13,28 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Linux arm64-build.** De release-matrix bouwt nu ook `linux-arm64` op
+  `ubuntu-24.04-arm` (gratis op publieke repo's). Pi's en ARM-servers hoeven dus
+  geen Python meer te hebben.
+- **`scripts/install.sh` installeert standaard de binary.** Zonder argumenten
+  downloadt het de release-tarball voor de eigen architectuur (`x64`/`arm64`),
+  pakt uit in `/opt/flexpoll` en schrijft de systemd-unit met
+  `FLEXPOLL_DATA=/opt/flexpoll/data`. `--source` doet het oude pad (git clone +
+  venv), `--update` volgt het kanaal dat er al staat, `FLEXPOLL_VERSION` pint een
+  versie.
+- **Handmatige build-run zonder release.** `workflow_dispatch` op de
+  release-workflow bouwt en test alle artifacts, maar slaat de release-job over
+  (`if: github.event_name == 'push'`) — zo test je de matrix zonder een tag te
+  zetten.
+
+### Fixed
+
+- **`install.sh` wees naar de verkeerde repo** (`fvannieuwenhove/flexpoll`), dus
+  de broninstallatie klapte er meteen uit. Nu `FreeVN/FlexPoll`, en de clone is
+  `--depth 1`.
+
 ## [1.1.2] — 2026-10-31
 
 ## [1.1.1] — 2026-10-31

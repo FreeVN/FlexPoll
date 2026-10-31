@@ -28,6 +28,9 @@ jobs:
           - os: ubuntu-latest
             label: linux-x64
             archive: tar.gz
+          - os: ubuntu-24.04-arm
+            label: linux-arm64
+            archive: tar.gz
           - os: windows-latest
             label: windows-x64
             archive: zip
@@ -85,6 +88,9 @@ jobs:
   release:
     name: Release
     needs: build
+    # Alleen bij een echte tag. Een handmatige workflow_dispatch bouwt en test
+    # de artifacts, maar mag nooit een release met de branchnaam aanmaken.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
