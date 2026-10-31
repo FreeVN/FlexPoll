@@ -115,7 +115,9 @@ cd FlexPoll && ./flexpoll --port 8099        # data komt in ~/.local/share/FlexP
 ```
 
 32-bit ARM (armv7, bv. een oude Pi) heeft geen kant-en-klare build — gebruik
-daar `--source`.
+daar `--source`. De Linux-builds eisen **glibc ≥ 2.35** (Debian 12, Ubuntu 22.04+,
+Raspberry Pi OS Bookworm). Op ouder dan dat (bv. Debian 11) gebruik je ook
+`--source` met Python 3.10+.
 
 ### Windows 10/11 (x64)
 

@@ -15,6 +15,10 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ### Changed
 
+- **CI moderniseert.** Alle actions naar hun Node 24-versies (checkout v7, setup-python v7, upload-artifact v7, download-artifact v8, Docker-actions v4/v6/v7), zodat de deprecation-waarschuwingen weg zijn. De Linux-builds zijn **vastgepind op Ubuntu 22.04** in plaats van `ubuntu-latest`: die schuift naar Ubuntu 26 en dan eist de binary een glibc die te nieuw is voor Debian 12 en Raspberry Pi OS. Gemeten vloer van de binaries: **glibc 2.35**.
+
+### Changed
+
 - **README opent nu met een bèta-waarschuwing** en een Engelse samenvatting, zodat
   een internationale bezoeker in drie regels ziet wat het is (en dat het nog niet
   af is). GitHub-onderwerpen (topics) en de repo-omschrijving staan op de termen
