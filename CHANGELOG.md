@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-31
+
 ### Added
 
 - **Windows onefile-exe als extra download.** `flexpoll-onefile.spec` +
