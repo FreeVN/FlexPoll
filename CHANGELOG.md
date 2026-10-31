@@ -13,6 +13,14 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Changed
+
+- **README opent nu met een bèta-waarschuwing** en een Engelse samenvatting, zodat
+  een internationale bezoeker in drie regels ziet wat het is (en dat het nog niet
+  af is). GitHub-onderwerpen (topics) en de repo-omschrijving staan op de termen
+  waarop mensen zoeken: modbus, modbus-rtu, bacnet, bacnet-ip, rs485, fieldbus,
+  hvac, building-automation, diagnostic-tool.
+
 ## [1.2.0] — 2026-10-31
 
 ### Added

@@ -5,11 +5,41 @@ de werf. Eén Python-proces, een browser als front-end, geen cloud.
 
 Gemaakt door **Free van Nieuwenhove**, met de hulp van **Luc** (AI-copiloot).
 
-*A graphical diagnostic bench for HVAC fieldbuses — Modbus RTU over RS-485,
-Modbus TCP/IP and BACnet/IP. Stand-alone: Python standard library plus
-`pyserial`, no framework, no build step, no cloud.*
+**In English:** FlexPoll is a stand-alone web UI for commissioning and
+troubleshooting HVAC fieldbuses. It speaks **Modbus RTU (RS-485)**, **Modbus
+TCP/IP** and **BACnet/IP**, knows the register maps of common devices (Siemens
+EM1.8x, Belimo VAV/EV/EPIV, Grundfos CIM 200, Wilo, LG, Carrier, Clivet, Daikin),
+can scan a bus and find framing (baud/parity/stop bits), and exports BACnet points
+as an **EDE package (B.I.G.-EU layout 2.3)**. One Python process plus `pyserial`:
+no framework, no cloud, no database. Prebuilt binaries for **Windows x64, Linux
+x64/arm64 and macOS arm64**, or run it from source / Docker.
+*Status: early beta — see the warning below.*
+
+*Een grafische testbank voor HVAC-veldbussen — Modbus RTU over RS-485,
+Modbus TCP/IP en BACnet/IP. Stand-alone: Python-standaardbibliotheek plus
+`pyserial`, geen framework, geen cloud.*
 
 ![FlexPoll — Modbus RTU-tab met drie modules op de simulator](docs/screenshot.png)
+
+> ## ⚠️ Vroege bèta — volop in ontwikkeling
+>
+> FlexPoll is bruikbaar en heeft op echte hardware gedraaid (Siemens EM1.8x,
+> Belimo VAV-Compact, Grundfos CIM 200, BACnet/IP-toestellen), maar het is
+> **geen afgewerkt product**:
+>
+> - **Registermaps zijn deels onvolledig** en merkspecifiek. Wat hier werkt,
+>   werkt niet automatisch op een andere firmware of revisie.
+> - **Configformaat en API kunnen wijzigen** tussen minor-versies. Reken na een
+>   update op een controle van je opstelling.
+> - **Geen authenticatie** — bedoeld voor een besloten netwerk, niet voor het
+>   internet.
+> - De builds zijn **niet ondertekend** (SmartScreen/Gatekeeper waarschuwen) en
+>   **macOS is amper getest**.
+> - Functies kunnen van gedrag veranderen of verdwijnen; de changelog is de
+>   enige belofte.
+>
+> Bug gevonden of een toestel dat niet herkend wordt? Open een issue met **merk,
+> type en firmwareversie** — dat is de snelste weg naar een fix.
 
 ---
 
