@@ -92,6 +92,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          # Alleen onze eigen bundels: de buildx-job laat een verborgen
+          # `*.dockerbuild`-artifact achter dat de downloader laat stuklopen
+          # ("Artifact download failed after 5 retries").
+          pattern: flexpoll-*
 
       - name: Publiceren
         env:
