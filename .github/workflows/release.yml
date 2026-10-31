@@ -13,6 +13,9 @@ on:
 permissions:
   contents: write
   packages: write
+  # download-artifact@v4 leest de artifacts via de API; zonder `actions: read`
+  # faalt de private repo met "Artifact download failed after 5 retries".
+  actions: read
 
 jobs:
   build:
