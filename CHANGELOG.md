@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-10-31
+
 ### Changed
 
 - **CI moderniseert.** Alle actions naar hun Node 24-versies (checkout v7, setup-python v7, upload-artifact v7, download-artifact v8, Docker-actions v4/v6/v7), zodat de deprecation-waarschuwingen weg zijn. De Linux-builds zijn **vastgepind op Ubuntu 22.04** in plaats van `ubuntu-latest`: die schuift naar Ubuntu 26 en dan eist de binary een glibc die te nieuw is voor Debian 12 en Raspberry Pi OS. Gemeten vloer van de binaries: **glibc 2.35**.
