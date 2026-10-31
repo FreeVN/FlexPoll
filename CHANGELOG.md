@@ -35,6 +35,9 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ### Fixed
 
+- **Geen hostnaam meer in de HTML-bron.** De `#hostinfo`-placeholder stond hard
+  op de naam van de ontwikkel-Pi; die wordt bij de eerste render toch
+  overschreven, maar in een publieke repo hoort geen enkele hostnaam te staan.
 - **Poortlijst op Windows.** `list_ports()` keek enkel in `/dev/serial/by-id`
   en `/dev/ttyUSB*`; op Windows bestaat dat pad niet, waardoor de keuzelijst
   altijd leeg was en een ingepakte `.exe` zonder poort startte. Niet-Linux
