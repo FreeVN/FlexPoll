@@ -1,0 +1,49 @@
+name: Docs
+
+# Handleiding bouwen en publiceren naar GitHub Pages.
+# Alleen draaien als docs/ of de config verandert: een codewijziging zonder
+# documentatie-update hoeft de site niet opnieuw te bouwen.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: MkDocs installeren
+        run: pip install -r requirements-docs.txt
+      - name: Bouwen (waarschuwt bij een kapotte link)
+        run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

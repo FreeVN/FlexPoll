@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 Free van Nieuwenhove
+#
+# Handleiding voor eindgebruikers. Publiceren gebeurt automatisch:
+# .github/workflows/docs.yml bouwt dit en zet het op GitHub Pages.
+
+site_name: FlexPoll
+site_description: Handleiding — Modbus RTU/TCP & BACnet/IP testbank voor HVAC-veldbussen
+site_url: https://freevn.github.io/FlexPoll/
+repo_url: https://github.com/FreeVN/FlexPoll
+repo_name: FreeVN/FlexPoll
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: © 2026 Free van Nieuwenhove · AGPL-3.0-only
+
+theme:
+  name: material
+  language: nl
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: red
+      accent: red
+      toggle:
+        icon: material/weather-night
+        name: Donker
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: red
+      accent: red
+      toggle:
+        icon: material/weather-sunny
+        name: Licht
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+nav:
+  - FlexPoll: index.md
+  - Installeren: installatie.md
+  - Eerste meting: snelstart.md
+  - Modbus RTU (RS-485): modbus-rtu.md
+  - Modbus TCP/IP: modbus-tcp.md
+  - BACnet/IP: bacnet.md
+  - Als het niet werkt: problemen.md
+  - Aan de handleiding werken: bijdragen.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  generator: false

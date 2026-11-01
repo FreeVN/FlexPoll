@@ -1,0 +1,2 @@
+# Alleen voor het bouwen van de handleiding (docs/), niet voor de app zelf.
+mkdocs-material>=9.6,<10

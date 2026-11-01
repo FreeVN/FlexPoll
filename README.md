@@ -15,6 +15,10 @@ no framework, no cloud, no database. Prebuilt binaries for **Windows x64, Linux
 x64/arm64 and macOS arm64**, or run it from source / Docker.
 *Status: early beta — see the warning below.*
 
+📖 **Handleiding (NL):** <https://freevn.github.io/FlexPoll/> — installeren,
+eerste meting, Modbus RTU/TCP, BACnet/IP en probleemoplossing, met
+toegelichte schermafbeeldingen.
+
 *Een grafische testbank voor HVAC-veldbussen — Modbus RTU over RS-485,
 Modbus TCP/IP en BACnet/IP. Stand-alone: Python-standaardbibliotheek plus
 `pyserial`, geen framework, geen cloud.*

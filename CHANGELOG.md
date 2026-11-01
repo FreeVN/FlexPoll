@@ -13,6 +13,17 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Handleiding voor eindgebruikers** in `docs/`, gebouwd met MkDocs Material en
+  gepubliceerd op <https://freevn.github.io/FlexPoll/>: installeren, eerste
+  meting op de simulator, Modbus RTU, Modbus TCP, BACnet/IP en
+  probleemoplossing. Schermafbeeldingen komen uit de simulator en krijgen
+  genummerde aanduidingen via `docs/shots/annotate.py` (één `SPECS`-tabel met
+  coördinaten, dus bij een UI-wijziging verschuif je alleen het cijfer).
+  Publicatie loopt via `.github/workflows/docs.yml` bij elke wijziging aan
+  `docs/`; `mkdocs build --strict` faalt op een kapotte verwijzing.
+
 ## [1.3.0] — 2026-10-31
 
 ### Added
