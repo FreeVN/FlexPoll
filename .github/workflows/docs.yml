@@ -34,7 +34,7 @@ jobs:
         run: pip install -r requirements-docs.txt
       - name: Bouwen (waarschuwt bij een kapotte link)
         run: mkdocs build --strict
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
