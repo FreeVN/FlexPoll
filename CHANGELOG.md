@@ -13,6 +13,13 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **MS/TP-poortlijst zegt nu waarom ze leeg is.** Zonder aangesloten
+  USB-RS485-adapter stond er een lege dropdown, wat op een kapotte UI lijkt. Nu
+  staat er "geen adapter gevonden" met de hint om de stick in te pluggen, plus een
+  ↻-knop om de poorten opnieuw te zoeken zonder de pagina te herladen.
+
 ## [1.5.0] — 2026-11-01
 
 ### Added

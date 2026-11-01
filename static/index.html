@@ -182,7 +182,10 @@
       </div>
       <div class="bn-head">
         <div class="field"><label for="mstp-port">Poort</label>
-          <select id="mstp-port"></select></div>
+          <div class="portrow">
+            <select id="mstp-port"></select>
+            <button class="iconbtn" id="mstp-ports-refresh" title="Poorten opnieuw zoeken (na het inpluggen van de adapter)" aria-label="Poorten verversen">↻</button>
+          </div></div>
         <div class="field"><label for="mstp-baud">Baudrate</label>
           <select id="mstp-baud">
             <option>9600</option><option selected>19200</option><option>38400</option>

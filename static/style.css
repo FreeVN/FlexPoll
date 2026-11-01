@@ -555,3 +555,8 @@ button.io:hover { border-color: #c9d5e2; background: #fff; }
 .mstp-warn b { color: #a03d00; }
 #mstp-panel .bn-head { flex-wrap: wrap; }
 #mstp-panel .field input[type="number"] { width: 64px; }
+
+.portrow { display: flex; align-items: center; gap: 6px; }
+.portrow select { min-width: 210px; }
+.portrow .iconbtn { width: 24px; height: 24px; font-size: 13px; }
+.portrow select:invalid { color: #a03d00; }

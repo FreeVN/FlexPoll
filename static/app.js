@@ -1359,21 +1359,33 @@
   let mstpDevices = [];
   let mstpCurrent = null;
 
-  async function mstpInit() {
+  async function mstpInit(cfgGiven) {
     try {
       const [st, ports] = await Promise.all([api("/api/mstp"), api("/api/ports")]);
       const sel = $("#mstp-port");
       const list = ports.ports || ports || [];
-      sel.innerHTML = list.map((p) =>
-        `<option value="${esc(p.path)}">${esc(p.label || p.path)}</option>`).join("");
+      if (!list.length) {
+        // Lege lijst is geen UI-fout: er hangt geen USB-serieel adapter aan.
+        // Zeg dat met zoveel woorden, anders lijkt de dropdown stuk.
+        sel.innerHTML = `<option value="" disabled selected>geen adapter gevonden</option>`;
+        $("#mstp-status").textContent = "";
+        $("#mstp-hint").textContent =
+          "geen USB-RS485 gevonden — steek de adapter in en klik op ↻";
+      } else {
+        sel.innerHTML = list.map((p) =>
+          `<option value="${esc(p.path)}">${esc(p.label || p.path)}</option>`).join("");
+        const cfg = cfgGiven || st.config || {};
+        if (cfg.port && list.some((p) => p.path === cfg.port)) sel.value = cfg.port;
+      }
       const cfg = st.config || {};
-      if (cfg.port && list.some((p) => p.path === cfg.port)) sel.value = cfg.port;
       $("#mstp-baud").value = String(cfg.baud || 19200);
       $("#mstp-mac").value = cfg.mac ?? 0;
-      $("#mstp-status").textContent = st.open ? "verbonden" : "niet verbonden";
-      $("#mstp-hint").textContent = cfg.port
-        ? `${cfg.port} · ${cfg.baud} 8N1 · MAC ${cfg.mac}`
-        : "kies een poort en verbind";
+      if (list.length) {
+        $("#mstp-status").textContent = st.open ? "verbonden" : "niet verbonden";
+        $("#mstp-hint").textContent = cfg.port
+          ? `${cfg.port} · ${cfg.baud} 8N1 · MAC ${cfg.mac}`
+          : "kies een poort en verbind";
+      }
     } catch (err) {
       $("#mstp-status").textContent = "fout: " + err.message;
     }
@@ -1385,7 +1397,10 @@
       baud: parseInt($("#mstp-baud").value, 10),
       mac: parseInt($("#mstp-mac").value, 10) || 0,
     };
-    if (!body.port) { toast("geen seriële poort gevonden", "err"); return; }
+    if (!body.port) {
+      toast("geen USB-serieel adapter gevonden — steek hem in en klik op ↻", "err");
+      return;
+    }
     $("#mstp-status").textContent = "verbinden…";
     try {
       await api("/api/mstp/open", { method: "POST", body: JSON.stringify(body) });
@@ -1480,6 +1495,10 @@
       try { await api("/api/mstp/close", { method: "POST", body: "{}" }); } catch (_) {}
       $("#mstp-status").textContent = "niet verbonden";
       toast("MS/TP losgekoppeld — Modbus kan weer starten", "ok");
+    });
+    on("mstp-ports-refresh", async () => {
+      $("#mstp-hint").textContent = "poorten zoeken…";
+      await mstpInit();
     });
     on("mstp-scan", mstpScan);
     on("mstp-refresh", () => { if (mstpCurrent) mstpLoadPoints(mstpCurrent.mac, mstpCurrent.device); });
