@@ -13,6 +13,16 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **BACnet MS/TP (master).** Nieuwe tab voor BACnet over RS-485: eigen framing
+  (preamble, header-CRC-8, data-CRC-16/X.25), token-cyclus, Poll-For-Master,
+  Who-Is/I-Am, object-list en Present_Value lezen/schrijven. Getest tegen een
+  gesimuleerde peer (`make mstp-test`, via een pty) en met de frame-voorbeelden
+  uit de standaard — **niet** tegen een echt toestel; dat staat ook zo in de UI.
+  Verbinden zet de Modbus-polling op pauze en geeft de poort vrij, want één
+  poort kan maar één protocol tegelijk dragen.
+
 ## [1.4.0] — 2026-11-01
 
 ### Added

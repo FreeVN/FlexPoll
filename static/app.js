@@ -28,12 +28,12 @@
 
   const isTcp = (m) => m.transport === "tcp";
   const tabAllows = (key, t) => {
-    if (activeTab === "bacnet") return false;
+    if (activeTab === "bacnet" || activeTab === "mstp") return false;
     if (activeTab === "tcp") return t.transport === "tcp" || key === "generic";
     return t.transport !== "tcp";
   };
   const tabAllowsModule = (m) => {
-    if (activeTab === "bacnet") return false;
+    if (activeTab === "bacnet" || activeTab === "mstp") return false;
     return activeTab === "tcp" ? isTcp(m) : !isTcp(m);
   };
   let WCONTROL = {}, LGMODES = {};
@@ -98,6 +98,7 @@
         } catch (err) { toast(err.message, "err"); }
       });
       bindControls();
+      bindMstp();
       setInterval(refresh, 3000);
       setInterval(tick, 1000);
     } catch (err) {
@@ -217,7 +218,8 @@
     else if (bus.error) { txt = "Poortfout"; cls = "err"; }
     pill.className = `pill ${cls}`;
     $("#buspill-txt").textContent = txt;
-    $("#hostinfo").textContent = activeTab === "bacnet" ? "UDP 47808"
+    $("#hostinfo").textContent = activeTab === "mstp" ? "MS/TP"
+      : activeTab === "bacnet" ? "UDP 47808"
       : activeTab === "tcp"
       ? (mods.length ? `${mods.filter((m) => m.ip).length}/${mods.length} met IP` : "TCP/IP")
       : (bus.port ? bus.port.split("/").pop() : "geen poort");
@@ -1353,11 +1355,143 @@
     }
   }
 
+  // ------------------------------------------------------------------ BACnet MS/TP
+  let mstpDevices = [];
+  let mstpCurrent = null;
+
+  async function mstpInit() {
+    try {
+      const [st, ports] = await Promise.all([api("/api/mstp"), api("/api/ports")]);
+      const sel = $("#mstp-port");
+      const list = ports.ports || ports || [];
+      sel.innerHTML = list.map((p) =>
+        `<option value="${esc(p.path)}">${esc(p.label || p.path)}</option>`).join("");
+      const cfg = st.config || {};
+      if (cfg.port && list.some((p) => p.path === cfg.port)) sel.value = cfg.port;
+      $("#mstp-baud").value = String(cfg.baud || 19200);
+      $("#mstp-mac").value = cfg.mac ?? 0;
+      $("#mstp-status").textContent = st.open ? "verbonden" : "niet verbonden";
+      $("#mstp-hint").textContent = cfg.port
+        ? `${cfg.port} · ${cfg.baud} 8N1 · MAC ${cfg.mac}`
+        : "kies een poort en verbind";
+    } catch (err) {
+      $("#mstp-status").textContent = "fout: " + err.message;
+    }
+  }
+
+  async function mstpConnect() {
+    const body = {
+      port: $("#mstp-port").value,
+      baud: parseInt($("#mstp-baud").value, 10),
+      mac: parseInt($("#mstp-mac").value, 10) || 0,
+    };
+    if (!body.port) { toast("geen seriële poort gevonden", "err"); return; }
+    $("#mstp-status").textContent = "verbinden…";
+    try {
+      await api("/api/mstp/open", { method: "POST", body: JSON.stringify(body) });
+      $("#mstp-status").textContent = "verbonden";
+      $("#mstp-hint").textContent = `${body.port} · ${body.baud} 8N1 · MAC ${body.mac}`;
+      toast("MS/TP verbonden — Modbus is op pauze gezet", "ok");
+    } catch (err) {
+      $("#mstp-status").textContent = "";
+      toast(err.message, "err");
+    }
+  }
+
+  async function mstpScan() {
+    $("#mstp-status").textContent = "zoeken…";
+    try {
+      const res = await api("/api/mstp/whois", { method: "POST", body: "{}" });
+      mstpDevices = res.devices || [];
+      $("#mstp-status").textContent = mstpDevices.length
+        ? `${mstpDevices.length} toestel(len)` : "geen toestel gevonden";
+      mstpRenderDevices();
+    } catch (err) {
+      mstpDevices = [];
+      $("#mstp-status").textContent = "fout: " + err.message;
+      mstpRenderDevices();
+    }
+  }
+
+  function mstpRenderDevices() {
+    const host = $("#mstp-devices");
+    host.innerHTML = mstpDevices.map((d) => `
+      <button class="bndev" data-mac="${d.mac}" data-dev="${d.device}">
+        <span class="bndev-id">${d.device}</span>
+        <span class="bndev-name">${esc(d.name || "(naamloos)")}
+          <i>MAC ${d.mac} · vendor ${d.vendor}${d.model ? " · " + esc(d.model) : ""}</i></span>
+      </button>`).join("");
+    host.querySelectorAll(".bndev").forEach((el) => el.addEventListener("click", () => {
+      mstpLoadPoints(parseInt(el.dataset.mac, 10), parseInt(el.dataset.dev, 10));
+    }));
+  }
+
+  async function mstpLoadPoints(mac, device) {
+    mstpCurrent = { mac, device };
+    $("#mstp-title").textContent = `Device ${device} · MAC ${mac}`;
+    $("#mstp-detail").hidden = false;
+    $("#mstp-points").innerHTML = `<p class="bn-empty">punten lezen…</p>`;
+    try {
+      const res = await api("/api/mstp/points", {
+        method: "POST", body: JSON.stringify({ mac, device, limit: 60 }),
+      });
+      const rows = (res.points || []).map((p) => {
+        const writable = [1, 2, 4, 5, 14, 19].includes(p.type);
+        const value = p.ok ? (typeof p.value === "boolean" ? (p.value ? "AAN" : "UIT")
+          : (typeof p.value === "number" ? num(p.value, 2) : String(p.value ?? "—"))) : "—";
+        return `<tr>
+          <td class="bntype">${esc(p.abbr)}</td>
+          <td>${p.inst}</td>
+          <td>${esc(p.name || "")}</td>
+          <td class="bnval">${esc(value)}${p.unit ? " " + esc(p.unit) : ""}</td>
+          <td>${writable ? `<input class="bnwrite" data-type="${p.type}" data-inst="${p.inst}"
+                 placeholder="nieuwe waarde"> <button class="btn small" data-write="${p.type}:${p.inst}">Zet</button>`
+               : ""}</td>
+        </tr>`;
+      }).join("");
+      $("#mstp-points").innerHTML = `<table class="bntable">
+        <thead><tr><th>Type</th><th>Inst</th><th>Naam</th><th>Waarde</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+      $("#mstp-points").querySelectorAll("[data-write]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const [type, inst] = btn.dataset.write.split(":").map(Number);
+          const input = btn.parentElement.querySelector(".bnwrite");
+          let raw = input.value.trim();
+          if (!raw) return;
+          let value = raw;
+          if (/^-?\d+([.,]\d+)?$/.test(raw)) value = parseFloat(raw.replace(",", "."));
+          try {
+            await api("/api/mstp/write", { method: "POST", body: JSON.stringify({
+              mac: mstpCurrent.mac, type, inst, value }) });
+            toast("geschreven", "ok");
+            mstpLoadPoints(mstpCurrent.mac, mstpCurrent.device);
+          } catch (err) { toast("schrijven mislukt: " + err.message, "err"); }
+        });
+      });
+    } catch (err) {
+      $("#mstp-points").innerHTML = `<p class="bn-empty">fout: ${esc(err.message)}</p>`;
+    }
+  }
+
+  function bindMstp() {
+    const on = (id, fn) => { const el = $(`#${id}`); if (el) el.addEventListener("click", fn); };
+    on("mstp-connect", mstpConnect);
+    on("mstp-disconnect", async () => {
+      try { await api("/api/mstp/close", { method: "POST", body: "{}" }); } catch (_) {}
+      $("#mstp-status").textContent = "niet verbonden";
+      toast("MS/TP losgekoppeld — Modbus kan weer starten", "ok");
+    });
+    on("mstp-scan", mstpScan);
+    on("mstp-refresh", () => { if (mstpCurrent) mstpLoadPoints(mstpCurrent.mac, mstpCurrent.device); });
+  }
+
   function applyTab() {
     localStorage.setItem("ml-tab", activeTab);
     document.querySelectorAll("#tabs .tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === activeTab));
     const isBn = activeTab === "bacnet";
+    const isMstp = activeTab === "mstp";
     if (isBn) bnInit();
+    if (isMstp) mstpInit();
     // De busbar én de scanresultaten horen bij de RS-485-lijn: op de TCP- en
     // BACnet-tab is een "gevonden op adres 5" of een framingscan over RS-485
     // ronduit misleidend. Het scanbereik zit in de busbar, de resultaten in
@@ -1367,8 +1501,11 @@
     $("#scanbar").style.display = rtuTab ? "" : "none";
     $("#bacnet-panel").hidden = !isBn;
     $("#bacnet-panel").style.display = isBn ? "" : "none";
-    document.querySelector(".canvas-panel").style.display = isBn ? "none" : "";
-    document.querySelector(".palette").style.display = isBn ? "none" : "";
+    $("#mstp-panel").hidden = !isMstp;
+    $("#mstp-panel").style.display = isMstp ? "" : "none";
+    const hideCanvas = isBn || isMstp;
+    document.querySelector(".canvas-panel").style.display = hideCanvas ? "none" : "";
+    document.querySelector(".palette").style.display = hideCanvas ? "none" : "";
     const isTcpTab = activeTab === "tcp";
     document.querySelector(".canvas-head h2").textContent = isTcpTab ? "Modbus TCP/IP" : "Modbus-lijn";
     document.querySelector(".canvas-head .hint").textContent = isTcpTab
@@ -1379,6 +1516,7 @@
       rtu: "RS-485 · één framing per lijn",
       tcp: "Modbus TCP · elk toestel zijn eigen IP",
       bacnet: "BACnet/IP · UDP 47808",
+      mstp: "BACnet MS/TP · serieel, wij zijn master",
     }[activeTab];
     topologySig = null;
     renderPalette();

@@ -46,6 +46,7 @@ nav:
   - Modbus RTU (RS-485): modbus-rtu.md
   - Modbus TCP/IP: modbus-tcp.md
   - BACnet/IP: bacnet.md
+  - BACnet MS/TP: mstp.md
   - Als het niet werkt: problemen.md
   - Aan de handleiding werken: bijdragen.md
 

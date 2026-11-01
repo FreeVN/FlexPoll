@@ -5,12 +5,13 @@
 PY ?= .venv/bin/python
 PORT ?= 8098
 
-.PHONY: help venv check lint smoke run sim release dist docker clean
+.PHONY: help venv check lint smoke mstp-test run sim release dist dist-onefile docker clean
 
 help:
 	@echo "make venv     — .venv aanmaken en pyserial installeren"
 	@echo "make check    — syntaxis, versie-consistentie, licentieheaders"
 	@echo "make smoke    — simulator starten en /api/state bevragen"
+	@echo "make mstp-test — MS/TP-laag testen tegen een gesimuleerde peer (geen hardware)"
 	@echo "make run      — app op :8099 tegen de echte bus"
 	@echo "make sim      — app op :$(PORT) met de simulator"
 	@echo "make release V=1.1.0 — versie bumpen, changelog, commit, tag"
@@ -24,6 +25,7 @@ check:
 	$(PY) -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read(),f) for f in sys.argv[1:]]" \
 		app.py devices.py modbus_rtu.py modbus_tcp.py bacnet.py sim.py modbus_tcp_slave.py tests/bacnet_slave.py
 	node --check static/app.js
+	@$(PY) tests/mstp_selftest.py
 	@$(PY) -c "import bacnet as b; \
 	assert b._subnet_broadcast('192.168.20.219','24')=='192.168.20.255'; \
 	assert b._subnet_broadcast('10.1.2.3','255.255.0.0')=='10.1.255.255'; \
@@ -66,6 +68,10 @@ dist-onefile:
 	$(PY) -m pip -q install pyinstaller
 	$(PY) -m PyInstaller --noconfirm --clean flexpoll-onefile.spec
 	@echo "klaar: dist/flexpoll (.exe op Windows)"
+
+# MS/TP zonder hardware: CRCs, frames, token-cyclus en APDU's via een pty.
+mstp-test:
+	$(PY) tests/mstp_selftest.py
 
 docker:
 	docker build -f docker/Dockerfile -t flexpoll:$(shell cat VERSION) -t flexpoll:latest .

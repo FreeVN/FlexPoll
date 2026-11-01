@@ -87,5 +87,7 @@ een algemene foutmelding.
   geeft timeouts.
 - **Eén lijn per keer.** FlexPoll opent één seriële poort; meerdere RS-485-lijnen
   tegelijk vraagt meerdere instanties (of containers) met elk hun eigen poort.
+- **Niet tegelijk met BACnet MS/TP op dezelfde poort.** Ander protocol, andere
+  framing, en beide willen master zijn. Zie [BACnet MS/TP](mstp.md).
 - **247 adressen is de bovengrens**, en een scan over alles duurt bij 9600 baud
   meerdere minuten. Beperk je bereik.

@@ -45,6 +45,7 @@
   <button class="tab on" data-tab="rtu">Modbus RTU</button>
   <button class="tab" data-tab="tcp">Modbus TCP/IP</button>
   <button class="tab" data-tab="bacnet">BACnet/IP</button>
+  <button class="tab" data-tab="mstp">BACnet MS/TP</button>
   <span class="tab-note" id="tab-note">RS-485 · één framing per lijn</span>
 </nav>
 
@@ -170,6 +171,44 @@
         </div>
         <div class="bn-points" id="bn-points"></div>
         <p class="bn-note">Schrijven kan op analoge uitgangen/waarden, binaire uitgangen/waarden en multi-state. Andere objecten zijn alleen lezen.</p>
+      </div>
+    </div>
+
+    <div class="bacnet-panel" id="mstp-panel" hidden>
+      <div class="mstp-warn">
+        <b>Ongetest terrein.</b> MS/TP is gebouwd volgens de standaard en getest
+        tegen een gesimuleerde peer — niet op een echt toestel. Gebruik het als
+        diagnose, niet als productiehulpmiddel.
+      </div>
+      <div class="bn-head">
+        <div class="field"><label for="mstp-port">Poort</label>
+          <select id="mstp-port"></select></div>
+        <div class="field"><label for="mstp-baud">Baudrate</label>
+          <select id="mstp-baud">
+            <option>9600</option><option selected>19200</option><option>38400</option>
+            <option>57600</option><option>76800</option>
+          </select></div>
+        <div class="field"><label for="mstp-mac">Ons MAC-adres</label>
+          <input type="number" id="mstp-mac" min="0" max="127" value="0"></div>
+        <button class="btn primary" id="mstp-connect">Verbinden</button>
+        <button class="btn ghost" id="mstp-disconnect">Loskoppelen</button>
+      </div>
+      <div class="bn-head">
+        <button class="btn primary" id="mstp-scan">Toestellen zoeken</button>
+        <span class="bn-status" id="mstp-status"></span>
+        <span class="bn-hint" id="mstp-hint"></span>
+      </div>
+      <div class="bn-devices" id="mstp-devices"></div>
+      <div class="bn-detail" id="mstp-detail" hidden>
+        <div class="bn-dhead">
+          <h3 id="mstp-title"></h3>
+          <div class="bn-dtools">
+            <button class="btn small ghost" id="mstp-refresh">Verversen</button>
+          </div>
+        </div>
+        <div class="bn-points" id="mstp-points"></div>
+        <p class="bn-note">Schrijven kan op analoge uitgangen/waarden, binaire
+          uitgangen/waarden en multi-state. Andere objecten zijn alleen lezen.</p>
       </div>
     </div>
 </main>

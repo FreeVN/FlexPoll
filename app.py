@@ -105,6 +105,15 @@ DEFAULT_BUS = {
     "debug": False,
 }
 
+# MS/TP heeft een eigen poort, baud en MAC. Wordt nooit tegelijk met Modbus
+# gebruikt: bij verbinden gaat de Modbus-polling op pauze en geeft de poort vrij.
+DEFAULT_MSTP = {
+    "port": "",
+    "baud": 19200,
+    "mac": 0,
+    "timeout": 2.5,
+}
+
 BAUD_CHOICES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
 
 
@@ -279,6 +288,7 @@ class App:
         self.scan_progress = None
         self._ports_cache = (0.0, [])
         self._update_cache: tuple[float, dict] | None = None
+        self._mstp = None
         self.config = self._load_config()
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
@@ -300,6 +310,7 @@ class App:
         cfg = {
             "bus": {**DEFAULT_BUS, "port": preferred},
             "modules": [],
+            "mstp": dict(DEFAULT_MSTP),
         }
         if preferred:
             cfg["modules"].append({
@@ -369,7 +380,14 @@ class App:
                     unit = 1
                 entry["unit"] = min(8, max(1, unit))
             modules.append(entry)
-        return {"bus": bus, "modules": modules}
+        mstp = {**DEFAULT_MSTP, **(raw.get("mstp") or {})}
+        mstp["baud"] = int(mstp.get("baud") or 19200)
+        if mstp["baud"] not in (9600, 19200, 38400, 57600, 76800):
+            mstp["baud"] = 19200
+        mstp["mac"] = min(127, max(0, int(mstp.get("mac") or 0)))
+        mstp["timeout"] = min(10.0, max(1.0, float(mstp.get("timeout") or 2.5)))
+        mstp["port"] = str(mstp.get("port") or "")[:120]
+        return {"bus": bus, "modules": modules, "mstp": mstp}
 
     def save_config(self) -> None:
         atomic_write(CONFIG_PATH, json.dumps(self.config, indent=2, ensure_ascii=False))
@@ -724,6 +742,117 @@ class App:
 
     def bn_ede_package(self, ip: str, device: int, project: str = "") -> dict:
         return self.bacnet_client().ede_package(ip, device, project=project)
+
+    # ------------------------------------------------------------------ BACnet MS/TP
+    def mstp_client(self):
+        """Lazy: pas een seriële poort openen als de gebruiker MS/TP kiest.
+
+        MS/TP en Modbus RTU kunnen niet samen op één poort (ander protocol,
+        andere baud, en beide willen master zijn), dus bij openen zetten we de
+        Modbus-polling op stop en geven we de poort vrij.
+        """
+        import mstp
+
+        with self.lock:
+            if self._mstp is None:
+                cfg = self.config.get("mstp") or {}
+                self._mstp = mstp.MstpMaster(
+                    port=cfg.get("port") or "",
+                    mac=int(cfg.get("mac") or 0),
+                    baud=int(cfg.get("baud") or 19200),
+                    master_timeout=float(cfg.get("timeout") or 2.5),
+                )
+            return self._mstp
+
+    def mstp_connect(self, body: dict) -> dict:
+        import mstp
+
+        port = str(body.get("port") or "").strip()
+        if not port:
+            raise ActionError("kies eerst een seriële poort")
+        baud = int(body.get("baud") or 19200)
+        if baud not in mstp.BAUD_CHOICES:
+            raise ActionError("ongeldige baudrate voor MS/TP")
+        mac = max(0, min(127, int(body.get("mac") or 0)))
+
+        # Exclusiviteit: Modbus eerst loslaten, anders houdt die de poort vast.
+        with self.lock:
+            if self.config["bus"].get("mode") != "stop":
+                self.config["bus"]["mode"] = "pause"
+            self.config["mstp"] = {**self.config.get("mstp", {}),
+                                   "port": port, "baud": baud, "mac": mac}
+            self.save_config()
+        self.close_bus()                      # Modbus-poort vrijgeven
+        self.wake.set()
+
+        client = self.mstp_client()
+        client.close()
+        client.port_name, client.baud, client.mac = port, baud, mac
+        try:
+            client.open()
+        except Exception as exc:              # noqa: BLE001
+            self.add_log("error", f"MS/TP: {exc}")
+            raise ActionError(f"MS/TP-poort niet open: {exc}") from None
+        self.add_log("info", f"MS/TP master MAC {mac} op {port} ({baud} 8N1)")
+        return {"ok": True, "port": port, "baud": baud, "mac": mac}
+
+    def mstp_close(self) -> dict:
+        with self.lock:
+            client = self._mstp
+        if client is not None:
+            client.close()
+        self.add_log("info", "MS/TP gesloten")
+        return {"ok": True}
+
+    def _mstp_ready(self):
+        client = self.mstp_client()
+        if not client.is_open():
+            raise ActionError("MS/TP is niet verbonden")
+        return client
+
+    def mstp_whois(self) -> list[dict]:
+        client = self._mstp_ready()
+        try:
+            return client.whois(timeout=4.0)
+        except Exception as exc:              # noqa: BLE001
+            raise ActionError(f"MS/TP: {exc}") from None
+
+    def mstp_points(self, mac: int, device: int, limit: int = 60) -> dict:
+        import bacnet
+
+        client = self._mstp_ready()
+        rows = []
+        try:
+            objects = client.objects(mac, device)[:limit]
+        except Exception as exc:              # noqa: BLE001
+            raise ActionError(f"MS/TP: {exc}") from None
+        for obj in objects:
+            row = {"type": obj["type"], "inst": obj["inst"], "abbr": obj["abbr"],
+                   "name": "", "value": None, "unit": "", "ok": False, "error": None}
+            try:
+                name = client.read_property(mac, obj["type"], obj["inst"], bacnet.PROP_OBJECT_NAME)
+                row["name"] = str(name or "").replace("\x00", "").strip()
+            except Exception:                 # noqa: BLE001
+                pass
+            try:
+                value = client.read_property(mac, obj["type"], obj["inst"], bacnet.PROP_PRESENT_VALUE)
+                row["value"], row["ok"] = value, True
+            except Exception as exc:          # noqa: BLE001
+                row["error"] = str(exc)[:120]
+            rows.append(row)
+        device_row = {"type": 8, "inst": device, "abbr": "DEV", "name": "", "value": None,
+                      "unit": "", "ok": True, "error": None}
+        return {"points": rows, "device": device_row}
+
+    def mstp_write(self, mac: int, obj_type: int, inst: int, value):
+        client = self._mstp_ready()
+        try:
+            import bacnet
+
+            client.write_property(mac, obj_type, inst, bacnet.PROP_PRESENT_VALUE, value)
+        except Exception as exc:              # noqa: BLE001
+            raise ActionError(f"MS/TP: {exc}") from None
+        return {"ok": True, "value": value}
 
     # ------------------------------------------------------------------ polling-besturing
     def set_poll(self, body: dict) -> dict:
@@ -1127,6 +1256,15 @@ class Handler(BaseHTTPRequestHandler):
                 "lg_modes": devices.LG_MODES,
                 "baud_choices": BAUD_CHOICES,
             })
+        if path == "/api/mstp":
+            with self.app.lock:
+                cfg = dict(self.app.config.get("mstp") or DEFAULT_MSTP)
+                client = self.app._mstp
+            return self._json(200, {
+                "config": cfg,
+                "open": bool(client and client.is_open()),
+                "stats": (client.stats if client else {}),
+            })
         if path == "/api/update":
             # Staat hier (GET) en niet bij de POST-routes: de UI haalt hem op
             # zonder body, en de cache van een uur zit in check_update().
@@ -1240,8 +1378,20 @@ class Handler(BaseHTTPRequestHandler):
                     return self._error(502, f"BACnet: {exc}")
             if path == "/api/poll":
                 return self._json(200, self.app.set_poll(body))
-            if path == "/api/update":
-                return self._json(200, self.app.check_update())
+            if path == "/api/mstp/open":
+                return self._json(200, self.app.mstp_connect(body))
+            if path == "/api/mstp/close":
+                return self._json(200, self.app.mstp_close())
+            if path == "/api/mstp/whois":
+                return self._json(200, {"devices": self.app.mstp_whois()})
+            if path == "/api/mstp/points":
+                return self._json(200, self.app.mstp_points(
+                    int(body.get("mac") or 0), int(body.get("device") or 0),
+                    int(body.get("limit") or 60)))
+            if path == "/api/mstp/write":
+                return self._json(200, self.app.mstp_write(
+                    int(body.get("mac") or 0), int(body.get("type") or 0),
+                    int(body.get("inst") or 0), body.get("value")))
             if path == "/api/clear-log":
                 self.app.log.clear()
                 return self._json(200, {"ok": True})

@@ -547,3 +547,11 @@ button.io:hover { border-color: #c9d5e2; background: #fff; }
   .modules .card { width: 290px; }
   .field.port { flex-basis: 100%; }
 }
+
+/* MS/TP-paneel: waarschuwing bovenaan, want dit is ongetest terrein. */
+.mstp-warn { margin: 0 0 12px; padding: 9px 12px; border-radius: 10px;
+             background: #fff7e6; border: 1px solid #f3d9a4; color: #7a5200;
+             font-size: 11px; line-height: 1.45; }
+.mstp-warn b { color: #a03d00; }
+#mstp-panel .bn-head { flex-wrap: wrap; }
+#mstp-panel .field input[type="number"] { width: 64px; }
