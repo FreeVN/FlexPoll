@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-11-01
+
 ### Added
 
 - **BACnet MS/TP (master).** Nieuwe tab voor BACnet over RS-485: eigen framing
