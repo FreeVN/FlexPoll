@@ -20,8 +20,23 @@
   </div>
   <div class="spacer"></div>
   <div class="countdown" id="countdown">
-    <b id="cd-last">wachten op meting…</b><br>
-    <span id="hostinfo">FlexPoll</span>
+    <div class="cdtext">
+      <b id="cd-last">wachten op meting…</b>
+      <span id="hostinfo">FlexPoll</span>
+    </div>
+    <div class="cdctrl">
+      <input type="number" id="poll-sec" min="1" max="60" step="1" value="10" title="Pollinginterval in seconden (1–60)">
+      <span class="cdunit">s</span>
+      <button class="iconbtn cdbtn" id="poll-play" title="Polling starten" aria-label="Polling starten">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button class="iconbtn cdbtn" id="poll-pause" title="Pauzeren — bus blijft open" aria-label="Pauzeren">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+      </button>
+      <button class="iconbtn cdbtn" id="poll-stop" title="Stoppen — poort wordt vrijgegeven" aria-label="Stoppen">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+      </button>
+    </div>
   </div>
   <div class="pill" id="buspill"><span class="led"></span><span id="buspill-txt">Bus offline</span></div>
 </header>
@@ -162,6 +177,12 @@
 <footer style="padding:0 26px 18px;font-size:10px;color:#9aa5b3;letter-spacing:.04em">
   © 2026 Free van Nieuwenhove · FlexPoll <span id="appver"></span> — Modbus RTU · Modbus TCP/IP · BACnet/IP<br>
   gemaakt met de hulp van Luc · AGPL-3.0-only
+  <span class="footlinks">
+    <a href="https://freevn.github.io/FlexPoll/" target="_blank" rel="noopener">Handleiding</a>
+    <a href="https://github.com/FreeVN/FlexPoll" target="_blank" rel="noopener">GitHub</a>
+    <button class="linkbtn" id="btn-update" title="Kijkt op GitHub naar een nieuwere release">Controleer updates</button>
+    <span id="update-note"></span>
+  </span>
 </footer>
 
 <div class="modal" id="series-modal">

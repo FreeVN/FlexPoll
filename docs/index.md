@@ -55,3 +55,24 @@ leert doormeten. Je hoeft geen Python te kennen.
 Verder: bovenaan zie je of de bus **online** is en hoe lang geleden de laatste
 meting was. Rechts in de titelbalk staat de versie; die heb je nodig als je een
 probleem meldt.
+
+## Polling sturen
+
+Rechts bovenaan, naast "meting x s geleden", staat de bediening van de poll-lus:
+
+| Element | Wat het doet |
+|---|---|
+| **getal + `s`** | Het interval tussen twee meetrondes, **1 tot 60 seconden**. Korter = meer verkeer op de lijn; op een lange RS-485-lijn met veel modules is 5 s realistisch, bij één toestel mag 1 s. |
+| ▶ **play** | Polling loopt. |
+| ⏸ **pauze** | Stopt met lezen, maar **houdt de poort open** — handig als je even iets wil bekijken zonder de verbinding te verliezen. |
+| ⏹ **stop** | Stopt én **geeft de poort vrij**, zodat een ander programma (bv. de tool van de leverancier) de adapter kan gebruiken. |
+
+Het interval wordt bewaard in je configuratie; na een herstart loopt dezelfde
+snelheid weer.
+
+## Handleiding en updates
+
+Onderaan de pagina staan twee links (**Handleiding**, **GitHub**) en een knop
+**Controleer updates**. Die laatste vraagt aan GitHub wat de nieuwste release is
+en zegt of je up to date bent. Werkt de pc niet op het internet, dan zegt hij dat
+gewoon — de tool zelf heeft geen internet nodig.

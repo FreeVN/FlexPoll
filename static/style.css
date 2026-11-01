@@ -73,9 +73,31 @@ button { cursor: pointer; }
 .pill.err .led { background: var(--red); box-shadow: 0 0 0 3px rgba(228,0,43,.14); }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
 
-.countdown { font-size: 11px; color: var(--muted); font-weight: 500; text-align: right; line-height: 1.4; }
+.countdown { font-size: 11px; color: var(--muted); font-weight: 500; text-align: right; line-height: 1.4;
+             display: flex; align-items: center; gap: 12px; }
 .countdown b { color: var(--ink); font-weight: 700; }
 #cd-last.stale { color: var(--red-dark); }
+.cdtext { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.cdctrl { display: flex; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: 9px;
+          padding: 3px 5px; background: #fff; }
+.cdctrl input { width: 40px; border: none; background: transparent; font: inherit; font-size: 11px;
+                font-weight: 700; color: var(--ink); text-align: right; padding: 2px 0; }
+.cdctrl input:focus { outline: none; }
+.cdunit { font-size: 10px; color: #8b96a3; margin-right: 3px; }
+.cdbtn { width: 20px; height: 20px; }
+.cdbtn.on { background: var(--blue-dark); color: #fff; border-color: var(--blue-dark); }
+.cdbtn:hover { background: var(--blue-soft); }
+.cdbtn.on:hover { background: var(--blue-dark); }
+
+.footlinks { display: inline-flex; align-items: center; gap: 10px; margin-left: 8px; }
+.footlinks a { color: inherit; text-decoration: none; border-bottom: 1px dotted #b9c2cc; }
+.footlinks a:hover { color: var(--blue-dark); border-bottom-color: var(--blue-dark); }
+.linkbtn { border: none; background: none; padding: 0; font: inherit; font-size: 10px; letter-spacing: .04em;
+           color: inherit; cursor: pointer; border-bottom: 1px dotted #b9c2cc; }
+.linkbtn:hover { color: var(--blue-dark); border-bottom-color: var(--blue-dark); }
+#update-note.ok { color: var(--green-dark, #1c7c3e); font-weight: 700; }
+#update-note.new { color: var(--blue-dark); font-weight: 700; }
+#update-note.err { color: var(--red-dark); }
 
 .tabs { display: flex; gap: 6px; align-items: center; padding: 10px 26px 0; }
 .tab { border: 1px solid var(--line); background: #fff; border-radius: 10px 10px 0 0; padding: 8px 16px;

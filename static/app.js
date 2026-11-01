@@ -124,6 +124,7 @@
     renderStatus(s);
     renderLog();
     if (typeof s.now === "number") skew = Date.now() / 1000 - s.now;
+    syncPollMode();
   }
 
   // ------------------------------------------------------------------ palette
@@ -231,11 +232,28 @@
 
   function tick() {
     const el = $("#cd-last");
-    if (!state || !state.last_poll) { el.textContent = "wachten op meting…"; return; }
+    if (!state || !state.last_poll) {
+      el.textContent = state && state.bus && state.bus.mode === "stop" ? "polling gestopt" : "wachten op meting…";
+      el.classList.remove("stale");
+      return;
+    }
+    const mode = (state.bus && state.bus.mode) || "run";
+    if (mode !== "run") { el.textContent = mode === "pause" ? "gepauzeerd" : "polling gestopt"; return; }
     const age = Math.max(0, Math.round(Date.now() / 1000 - skew - state.last_poll));
     const interval = (state.bus && state.bus.interval) || 10;
     el.textContent = age <= 1 ? "net gemeten" : `meting ${age} s geleden`;
     el.classList.toggle("stale", age > interval * 1.8 + 2);
+  }
+
+  // Welke van de drie knoppen licht op, en klopt het intervalveld?
+  function syncPollMode() {
+    const mode = (state && state.bus && state.bus.mode) || "run";
+    for (const [id, m] of [["poll-play", "run"], ["poll-pause", "pause"], ["poll-stop", "stop"]]) {
+      const b = $(`#${id}`);
+      if (b) b.classList.toggle("on", m === mode);
+    }
+    const sec = $("#poll-sec");
+    if (sec && document.activeElement !== sec && state && state.bus) sec.value = state.bus.interval;
   }
 
   // ------------------------------------------------------------------ topology
@@ -1442,6 +1460,58 @@
 
   // ------------------------------------------------------------------ events
   function bindControls() {
+    // --- polling: interval + play/pause/stop -------------------------------
+    const sec = $("#poll-sec");
+    let intervalTimer = null;
+    async function postPoll(payload) {
+      try {
+        const res = await api("/api/poll", { method: "POST", body: JSON.stringify(payload) });
+        if (res && res.bus) { state = res; renderBus(res.bus); }
+        syncPollMode();
+      } catch (err) { toast(err.message, "err"); }
+    }
+    if (sec) {
+      const commit = () => {
+        const v = Math.min(60, Math.max(1, parseInt(sec.value, 10) || 10));
+        sec.value = v;
+        postPoll({ interval: v });
+      };
+      sec.addEventListener("change", commit);
+      sec.addEventListener("keydown", (e) => { if (e.key === "Enter") { sec.blur(); commit(); } });
+      sec.addEventListener("input", () => { clearTimeout(intervalTimer); intervalTimer = setTimeout(commit, 700); });
+    }
+    for (const [id, mode] of [["poll-play", "run"], ["poll-pause", "pause"], ["poll-stop", "stop"]]) {
+      const btn = $(`#${id}`);
+      if (btn) btn.addEventListener("click", () => postPoll({ mode }));
+    }
+
+    // --- footer: updatecheck ---------------------------------------------
+    const upd = $("#btn-update");
+    if (upd) upd.addEventListener("click", async () => {
+      const note = $("#update-note");
+      upd.disabled = true;
+      note.className = "";
+      note.textContent = "kijken…";
+      try {
+        const r = await api("/api/update");
+        if (!r.ok) {
+          note.className = "err";
+          note.textContent = "geen verbinding met GitHub";
+        } else if (r.newer) {
+          note.className = "new";
+          note.innerHTML = `nieuwe versie ${esc(r.latest)} — <a href="${esc(r.url)}" target="_blank" rel="noopener">downloaden</a>`;
+        } else {
+          note.className = "ok";
+          note.textContent = `up to date (${esc(r.current)})`;
+        }
+      } catch (err) {
+        note.className = "err";
+        note.textContent = err.message;
+      } finally {
+        upd.disabled = false;
+      }
+    });
+
     const field = $("#linefield");
     const line = $("#insertline");
 

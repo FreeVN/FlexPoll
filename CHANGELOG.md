@@ -24,6 +24,17 @@ voor de UI, `python3 app.py --version` en de git-tag.
   Publicatie loopt via `.github/workflows/docs.yml` bij elke wijziging aan
   `docs/`; `mkdocs build --strict` faalt op een kapotte verwijzing.
 
+### Added
+
+- **Polling zelf sturen.** Interval instelbaar van **1 tot 60 s** (was 2–60) met
+  een invoerveld naast de metingsteller, plus **play / pauze / stop**. Pauzeren
+  laat de poort open, stoppen geeft ze vrij zodat een andere tool de adapter kan
+  gebruiken. De modus wordt bewaard in `config.json` (`bus.mode`).
+- **Footer met wegwijzers.** Links naar de handleiding en de repo, en een knop
+  **Controleer updates** die `/api/update` bevraagt: laatste GitHub-release
+  (5 s time-out, 1 uur cache), met `newer`-vlag. Offline geeft dat een nette
+  melding in plaats van een fout.
+
 ## [1.3.0] — 2026-10-31
 
 ### Added

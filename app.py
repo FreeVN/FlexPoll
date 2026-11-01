@@ -44,6 +44,24 @@ def _read_version() -> str:
 
 APP_VERSION = _read_version()
 
+REPO_URL = "https://github.com/FreeVN/FlexPoll"
+RELEASES_URL = f"{REPO_URL}/releases"
+DOCS_URL = "https://freevn.github.io/FlexPoll/"
+
+
+def _version_tuple(v: str) -> tuple[int, ...]:
+    """'1.2.10' -> (1, 2, 10); rommel levert (0,) op zodat vergelijken nooit klapt."""
+    parts = []
+    for chunk in str(v or "").lstrip("v").split("."):
+        num = ""
+        for ch in chunk:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        parts.append(int(num) if num else 0)
+    return tuple(parts) or (0,)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -81,6 +99,9 @@ DEFAULT_BUS = {
     "stopbits": 1,
     "timeout": 0.5,
     "interval": 10,
+    # run = pollen, pause = bus blijft open maar er wordt niet gelezen,
+    # stop = ook de poort wordt vrijgegeven (voor een ander programma).
+    "mode": "run",
     "debug": False,
 }
 
@@ -257,6 +278,7 @@ class App:
         self.scanning = False
         self.scan_progress = None
         self._ports_cache = (0.0, [])
+        self._update_cache: tuple[float, dict] | None = None
         self.config = self._load_config()
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
@@ -309,7 +331,8 @@ class App:
         bus["parity"] = bus.get("parity") if bus.get("parity") in ("N", "E", "O") else "N"
         bus["stopbits"] = 2 if int(bus.get("stopbits") or 1) == 2 else 1
         bus["timeout"] = min(3.0, max(0.1, float(bus.get("timeout") or 0.5)))
-        bus["interval"] = min(60, max(2, int(bus.get("interval") or 10)))
+        bus["interval"] = min(60, max(1, int(bus.get("interval") or 10)))
+        bus["mode"] = bus.get("mode") if bus.get("mode") in ("run", "pause", "stop") else "run"
         bus["debug"] = bool(bus.get("debug"))
         modules = []
         used_ids = set()
@@ -610,12 +633,21 @@ class App:
     def _poll_loop(self) -> None:
         # eerste ronde meteen
         while True:
-            try:
-                self.poll_once()
-            except Exception as exc:  # pragma: no cover
-                self.add_log("error", f"Poll-lus: {exc}")
-            interval = self.config["bus"]["interval"]
-            self.wake.wait(interval)
+            mode = self.config["bus"].get("mode", "run")
+            if mode == "run":
+                try:
+                    self.poll_once()
+                except Exception as exc:  # pragma: no cover
+                    self.add_log("error", f"Poll-lus: {exc}")
+                wait = self.config["bus"]["interval"]
+            else:
+                # Gestopt: de poort vrijgeven zodat bv. de leverancier zijn tool
+                # kan aansluiten. Gepauzeerd: bus blijft open, enkel niet lezen.
+                if mode == "stop" and self.bus is not None:
+                    self.close_bus()
+                # Kort wachten zodat play/pause meteen reageert.
+                wait = 1.0
+            self.wake.wait(wait)
             self.wake.clear()
 
     # ------------------------------------------------------------------ state
@@ -692,6 +724,63 @@ class App:
 
     def bn_ede_package(self, ip: str, device: int, project: str = "") -> dict:
         return self.bacnet_client().ede_package(ip, device, project=project)
+
+    # ------------------------------------------------------------------ polling-besturing
+    def set_poll(self, body: dict) -> dict:
+        """Interval en modus (run/pause/stop) van de poll-lus aanpassen."""
+        with self.lock:
+            bus = self.config["bus"]
+            if body.get("interval") is not None:
+                try:
+                    value = int(body["interval"])
+                except (TypeError, ValueError):
+                    raise ActionError("interval moet een getal zijn") from None
+                bus["interval"] = max(1, min(60, value))
+            mode = body.get("mode")
+            if mode is not None:
+                if mode not in ("run", "pause", "stop"):
+                    raise ActionError("mode moet run, pause of stop zijn")
+                bus["mode"] = mode
+                if mode == "stop":
+                    self.close_bus()
+                if mode == "run":
+                    self.last_poll = None       # anders lijkt de meting meteen oud
+        self.save_config()
+        self.wake.set()                         # poll-lus meteen wakker maken
+        return self.state()
+
+    def check_update(self) -> dict:
+        """Laatste release op GitHub opvragen (5 s time-out, 1 uur cache).
+
+        De app werkt volledig offline; dit is enkel de knop in de footer en mag
+        dus nooit blokkeren of een exception naar de UI laten lekken.
+        """
+        cached = self._update_cache
+        if cached and time.time() - cached[0] < 3600:
+            return cached[1]
+        out: dict = {"current": APP_VERSION, "latest": None, "newer": False,
+                     "url": RELEASES_URL, "ok": False, "error": None}
+        try:
+            import json as _json
+            import urllib.request
+
+            req = urllib.request.Request(
+                "https://api.github.com/repos/FreeVN/FlexPoll/releases/latest",
+                headers={"User-Agent": f"FlexPoll/{APP_VERSION}",
+                         "Accept": "application/vnd.github+json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = _json.load(resp)
+            latest = str(data.get("tag_name") or "").lstrip("v")
+            if latest:
+                out["latest"] = latest
+                out["url"] = data.get("html_url") or out["url"]
+                out["newer"] = _version_tuple(latest) > _version_tuple(APP_VERSION)
+                out["ok"] = True
+        except Exception as exc:                        # noqa: BLE001
+            out["error"] = str(exc)[:140]
+        self._update_cache = (time.time(), out)
+        return out
 
     def state(self) -> dict:
         with self.lock:
@@ -1038,6 +1127,10 @@ class Handler(BaseHTTPRequestHandler):
                 "lg_modes": devices.LG_MODES,
                 "baud_choices": BAUD_CHOICES,
             })
+        if path == "/api/update":
+            # Staat hier (GET) en niet bij de POST-routes: de UI haalt hem op
+            # zonder body, en de cache van een uur zit in check_update().
+            return self._json(200, self.app.check_update())
         if path == "/api/bacnet/subnets":
             import bacnet
 
@@ -1145,6 +1238,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, {"ok": True, "value": value})
                 except Exception as exc:                   # noqa: BLE001
                     return self._error(502, f"BACnet: {exc}")
+            if path == "/api/poll":
+                return self._json(200, self.app.set_poll(body))
+            if path == "/api/update":
+                return self._json(200, self.app.check_update())
             if path == "/api/clear-log":
                 self.app.log.clear()
                 return self._json(200, {"ok": True})
