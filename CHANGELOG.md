@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-11-01
+
 ### Added
 
 - **Handleiding voor eindgebruikers** in `docs/`, gebouwd met MkDocs Material en
