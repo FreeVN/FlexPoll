@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-11-01
+
 ### Fixed
 
 - **MS/TP-poortlijst zegt nu waarom ze leeg is.** Zonder aangesloten
