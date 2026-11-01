@@ -43,7 +43,7 @@ jobs:
           - os: windows-latest
             label: windows-x64-onefile
             archive: exe
-          - os: macos-14
+          - os: macos-15
             label: macos-arm64
             archive: zip
 
@@ -114,7 +114,11 @@ jobs:
     needs: build
     # Alleen bij een echte tag. Een handmatige workflow_dispatch bouwt en test
     # de artifacts, maar mag nooit een release met de branchnaam aanmaken.
-    if: github.event_name == 'push'
+    #
+    # `always()` omdat macOS-runners soms geannuleerd worden (capaciteit). Zonder
+    # dit blijft de hele release liggen terwijl Windows en Linux wél gebouwd zijn.
+    # De stap hieronder eist de verplichte artifacts; macOS mag ontbreken.
+    if: github.event_name == 'push' && always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -126,6 +130,19 @@ jobs:
           # `*.dockerbuild`-artifact achter dat de downloader laat stuklopen
           # ("Artifact download failed after 5 retries").
           pattern: flexpoll-*
+
+      - name: Verplichte artifacts controleren
+        run: |
+          miss=0
+          for pat in 'FlexPoll-*linux-x64.tar.gz' 'FlexPoll-*linux-arm64.tar.gz' 'FlexPoll-*windows-x64.zip' 'FlexPoll-*windows-x64-onefile.exe'; do
+            if ! ls artifacts/*/$pat >/dev/null 2>&1 && ! ls artifacts/$pat >/dev/null 2>&1; then
+              echo "::error::verplicht artifact ontbreekt: $pat"
+              miss=1
+            fi
+          done
+          if [ "$miss" = "1" ]; then exit 1; fi
+          echo "alle verplichte artifacts aanwezig"
+          ls -R artifacts | head -40
 
       - name: Publiceren
         env:
