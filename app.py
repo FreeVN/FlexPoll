@@ -669,9 +669,9 @@ class App:
             self.wake.clear()
 
     # ------------------------------------------------------------------ state
-    def ports(self) -> list[dict]:
+    def ports(self, force: bool = False) -> list[dict]:
         ts, cached = self._ports_cache
-        if now() - ts < 15:
+        if not force and now() - ts < 15:
             return cached
         ports = list_ports()
         self._ports_cache = (now(), ports)
@@ -1240,11 +1240,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ routes
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path, q = parsed.path, parsed.query
         if path == "/api/state":
             return self._json(200, self.app.state())
         if path == "/api/ports":
-            return self._json(200, {"ports": self.app.ports()})
+            # force=1: cache negeren, zodat de ↻-knop meteen een nieuwe stick ziet
+            # in plaats van tot 15 s een verouderde lege lijst te tonen.
+            return self._json(200, {"ports": self.app.ports(force="force=1" in (q or ""))})
         if path == "/api/types":
             return self._json(200, {
                 "types": TYPES,

@@ -52,7 +52,11 @@
 <div class="busbar" id="busbar">
   <div class="field port">
     <label for="port">USB → RS485 adapter</label>
-    <select id="port"></select>
+    <div class="portrow">
+      <select id="port"></select>
+      <button class="iconbtn" id="ports-refresh" title="Poorten opnieuw zoeken (na het inpluggen van de adapter)" aria-label="Poorten verversen">↻</button>
+    </div>
+    <span id="port-hint" class="portnote"></span>
   </div>
   <div class="field">
     <label for="baud">Baudrate</label>

@@ -184,14 +184,25 @@
   function renderBus(bus) {
     const sel = $("#port");
     const sig = (bus.ports || []).map((p) => p.path).join("|") + "§" + bus.port;
+    const havePorts = (bus.ports || []).length > 0;
     if (sig !== portsSig) {
       portsSig = sig;
-      sel.innerHTML = (bus.ports || []).map((p) =>
-        `<option value="${esc(p.path)}">${esc(p.label)} — ${esc(p.real)}${p.present ? "" : " (weg)"}</option>`
-      ).join("");
-      if (bus.port && !(bus.ports || []).some((p) => p.path === bus.port)) {
-        sel.insertAdjacentHTML("beforeend", `<option value="${esc(bus.port)}">${esc(bus.port)}</option>`);
+      if (!havePorts) {
+        // Geen adapter = geen lijst. Zeg het, anders lijkt de select stuk.
+        sel.innerHTML = `<option value="" disabled selected>geen adapter gevonden</option>`;
+      } else {
+        sel.innerHTML = (bus.ports || []).map((p) =>
+          `<option value="${esc(p.path)}">${esc(p.label)} — ${esc(p.real)}${p.present ? "" : " (weg)"}</option>`
+        ).join("");
+        if (bus.port && !(bus.ports || []).some((p) => p.path === bus.port)) {
+          sel.insertAdjacentHTML("beforeend", `<option value="${esc(bus.port)}">${esc(bus.port)}</option>`);
+        }
       }
+    }
+    const hint = $("#port-hint");
+    if (hint) {
+      hint.textContent = havePorts ? ""
+        : "geen USB-RS485 gevonden — steek de adapter in en klik op ↻";
     }
     sel.value = bus.port;
     $("#trace-toggle").checked = !!bus.debug;
@@ -1359,9 +1370,12 @@
   let mstpDevices = [];
   let mstpCurrent = null;
 
-  async function mstpInit(cfgGiven) {
+  async function mstpInit(cfgGiven, forcePorts) {
     try {
-      const [st, ports] = await Promise.all([api("/api/mstp"), api("/api/ports")]);
+      const [st, ports] = await Promise.all([
+        api("/api/mstp"),
+        api("/api/ports" + (forcePorts ? "?force=1" : "")),
+      ]);
       const sel = $("#mstp-port");
       const list = ports.ports || ports || [];
       if (!list.length) {
@@ -1498,7 +1512,7 @@
     });
     on("mstp-ports-refresh", async () => {
       $("#mstp-hint").textContent = "poorten zoeken…";
-      await mstpInit();
+      await mstpInit(undefined, true);
     });
     on("mstp-scan", mstpScan);
     on("mstp-refresh", () => { if (mstpCurrent) mstpLoadPoints(mstpCurrent.mac, mstpCurrent.device); });
@@ -1617,6 +1631,23 @@
 
   // ------------------------------------------------------------------ events
   function bindControls() {
+    // --- poorten verversen (zelfde uitleg als op de MS/TP-tab) --------------
+    const portRefresh = $("#ports-refresh");
+    if (portRefresh) portRefresh.addEventListener("click", async () => {
+      portRefresh.disabled = true;
+      try {
+        const res = await api("/api/ports?force=1");
+        if (state && state.bus) {
+          portsSig = "";                       // forceer opnieuw opbouwen
+          renderBus({ ...state.bus, ports: res.ports || [] });
+        }
+      } catch (err) {
+        toast(err.message, "err");
+      } finally {
+        portRefresh.disabled = false;
+      }
+    });
+
     // --- polling: interval + play/pause/stop -------------------------------
     const sec = $("#poll-sec");
     let intervalTimer = null;

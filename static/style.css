@@ -560,3 +560,7 @@ button.io:hover { border-color: #c9d5e2; background: #fff; }
 .portrow select { min-width: 210px; }
 .portrow .iconbtn { width: 24px; height: 24px; font-size: 13px; }
 .portrow select:invalid { color: #a03d00; }
+
+/* Zelfde uitleg als bij MS/TP: een lege poortlijst is geen kapotte UI. */
+.portnote { display: block; margin-top: 3px; font-size: 9.5px; letter-spacing: .03em;
+            color: #a03d00; max-width: 240px; line-height: 1.3; }

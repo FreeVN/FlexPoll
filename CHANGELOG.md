@@ -13,6 +13,14 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Zelfde uitleg op de Modbus RTU-tab.** De poortkeuze in de busbar toonde
+  eveneens een lege dropdown zonder reden. Nu staat er "geen adapter gevonden"
+  met de hint om de stick in te pluggen, plus een ↻-knop.
+- **↻ negeert de poortencache.** `/api/ports?force=1` scant opnieuw in plaats van
+  tot 15 s een verouderde (lege) lijst terug te geven.
+
 ## [1.5.1] — 2026-11-01
 
 ### Fixed
