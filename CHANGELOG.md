@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-11-01
+
 ### Fixed
 
 - **Zelfde uitleg op de Modbus RTU-tab.** De poortkeuze in de busbar toonde
