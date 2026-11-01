@@ -50,3 +50,7 @@ git commit -q -m "chore(release): v$V"
 git tag -a "v$V" -m "FlexPoll $V"
 
 echo "v$V klaar. Nu: git push --follow-tags"
+echo
+echo "Handleiding: raakt deze release de UI? Werk dan docs/ bij en de"
+echo "screenshots (docs/shots/raw + annotate.py), anders beschrijft de"
+echo "site een versie die niet meer bestaat."
