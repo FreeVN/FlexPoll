@@ -15,6 +15,9 @@ Je kan ermee:
 - **BACnet/IP**: toestellen zoeken met Who-Is, hun objecten lezen en schrijven,
   en de puntenlijst als **EDE-pakket** exporteren voor de gebouwbeheerder.
 
+Eerst kijken zonder iets te installeren? De app heeft een gesimuleerde bus:
+[bekijk de demo](demo.md) met vier modules die antwoorden als echte toestellen.
+
 ## Voor wie
 
 Deze handleiding is voor wie de tool **gebruikt**: de technieker op de werf, de

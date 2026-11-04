@@ -41,6 +41,7 @@ theme:
 
 nav:
   - FlexPoll: index.md
+  - Demo: demo.md
   - Installeren: installatie.md
   - Eerste meting: snelstart.md
   - Modbus RTU (RS-485): modbus-rtu.md
