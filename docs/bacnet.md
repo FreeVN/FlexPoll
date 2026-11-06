@@ -48,24 +48,58 @@ en de projectkop) die een gebouwbeheerder rechtstreeks kan inlezen.
 Vul eerst een **projectnaam** in als je die wil laten meelopen in de bestandsnaam;
 anders gebruikt de tool de devicenaam.
 
+## Toestel achter een router: toevoegen op IP
+
+Lezen is unicast (ReadProperty naar het IP van het toestel), dus je hebt **geen
+netwerkaanpassing** nodig om punten te bekijken. Vul bij **Toestel op IP** het
+adres in en klik **Toevoegen**:
+
+- Laat je **Device-id** leeg, dan stuurt FlexPoll een **unicast Who-Is** naar dat
+  adres en neemt het eerste antwoord (I-Am) over.
+- Ken je het device-id, vul het dan zelf in; FlexPoll leest dan meteen naam,
+  model en vendor.
+- Het toestel blijft bewaard in `config.json` (badge **opgeslagen**) en heeft een
+  **×** om het te verwijderen. Scannen en opgeslagen toestellen staan in één
+  lijst; een scan wist ze niet.
+
+## Scannen over een router: BBMD (Foreign Device)
+
+Een **Who-Is** is een broadcast en die gaat niet door een router. Staat er in het
+andere subnet een **BBMD** (Broadcast Management Device), meld je dan aan met
+**BBMD (Foreign Device)**:
+
+1. Vul het IP en de poort (standaard 47808) van de BBMD in en een **TTL** in
+   seconden (30–300 is gebruikelijk).
+2. Klik **Aanmelden**. FlexPoll stuurt `Register-Foreign-Device` (BVLC `0x05`) en
+   toont "aangemeld bij … · nog Ns".
+3. De registratie wordt automatisch herhaald vóór de TTL verloopt (op TTL/2) en
+   na een herstart opnieuw uitgevoerd. Is de BBMD onbereikbaar, dan vervalt de
+   registratie met een waarschuwing in het log — lezen blijft gewoon werken.
+4. Leeg het veld en klik opnieuw op **Aanmelden** om af te melden.
+
+FlexPoll is **zelf geen BBMD**: het meldt zich alleen aan bij een bestaande. Die
+BBMD hoort door het netwerk of de gebouwcontroller geleverd te worden. Let op:
+een BBMD werkt met IP-adressen in de payload, dus **NAT** tussen de subnetten
+breekt het.
+
 ## Waarom zie ik geen toestellen?
 
 In volgorde van waarschijnlijkheid:
 
-1. **Andere VLAN of subnet.** Broadcast gaat niet over een router. Zet FlexPoll in
-   hetzelfde VLAN als de toestellen, of vul het broadcastadres van dat subnet in
-   (dan moet de router wel directed broadcast doorlaten).
+1. **Andere VLAN of subnet.** Broadcast gaat niet over een router. Vul het IP van
+   het toestel in bij **Toestel op IP**, of meld je aan bij de BBMD van dat subnet.
 2. **Firewall.** UDP 47808 moet open, inkomend én uitgaand.
 3. **Wi-Fi client isolation.** Op een gastnetwerk kunnen clients elkaar niet zien,
    dus ook geen broadcast.
-4. **BBMD.** In een gebouw met BACnet-routing moet je bij een BBMD registreren.
-   FlexPoll doet dat niet; zet hem dan in hetzelfde subnet als de toestellen.
-5. **BACnet/SC of MS/TP.** Dat zijn andere transporten; deze tool doet alleen
-   BACnet/IP (Annex J).
+4. **BACnet/SC of MS/TP.** Dat zijn andere transporten; deze tool doet alleen
+   BACnet/IP (Annex J) — MS/TP heeft een eigen tab.
+5. **Verkeerd device-id.** Bij handmatig toevoegen met een id dat niet bestaat,
+   antwoordt het toestel met `unknown-object`; laat het veld dan leeg.
 
 ## Grenzen
 
 - Geen **ReadPropertyMultiple**: elk punt wordt apart gelezen. Bij een toestel met
   200 punten duurt de eerste keer laden dus even.
-- Geen **BBMD-registratie** en geen foreign device.
-- Geen **BACnet/SC** (Secure Connect) en geen MS/TP.
+- **Geen eigen BBMD-service**: FlexPoll kan zich als Foreign Device aanmelden,
+  maar geen broadcasts voor andere clients doorgeven (BDT/FDT-relay).
+- Geen **BACnet/SC** (Secure Connect).

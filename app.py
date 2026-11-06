@@ -114,12 +114,34 @@ DEFAULT_MSTP = {
     "timeout": 2.5,
 }
 
+# BACnet/IP: BBMD (= Foreign Device-registratie) en de toestellen die de
+# gebruiker zelf op IP toevoegde. Die lijst is de route over een router heen:
+# discovery-broadcasts geraken daar niet, unicast-lezen wel.
+DEFAULT_BACNET = {
+    "bbmd": "",
+    "bbmd_port": 47808,
+    "ttl": 60,
+    "devices": [],
+}
+
 BAUD_CHOICES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
 
 
 # --------------------------------------------------------------------------- helpers
 def now() -> float:
     return time.time()
+
+
+def _as_int(value, default: int = 0) -> int:
+    """Robuuste int-conversie voor waarden uit JSON/query (nooit een 500)."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def atomic_write(path: str, text: str) -> None:
@@ -311,6 +333,7 @@ class App:
             "bus": {**DEFAULT_BUS, "port": preferred},
             "modules": [],
             "mstp": dict(DEFAULT_MSTP),
+            "bacnet": {**DEFAULT_BACNET, "devices": []},
         }
         if preferred:
             cfg["modules"].append({
@@ -387,7 +410,32 @@ class App:
         mstp["mac"] = min(127, max(0, int(mstp.get("mac") or 0)))
         mstp["timeout"] = min(10.0, max(1.0, float(mstp.get("timeout") or 2.5)))
         mstp["port"] = str(mstp.get("port") or "")[:120]
-        return {"bus": bus, "modules": modules, "mstp": mstp}
+        bn = {**DEFAULT_BACNET, **(raw.get("bacnet") or {})}
+        bn["bbmd"] = str(bn.get("bbmd") or "").strip()[:64]
+        try:
+            bn["bbmd_port"] = min(65535, max(1, int(bn.get("bbmd_port") or 47808)))
+        except (TypeError, ValueError):
+            bn["bbmd_port"] = 47808
+        try:
+            bn["ttl"] = min(3600, max(0, int(bn.get("ttl", 60))))
+        except (TypeError, ValueError):
+            bn["ttl"] = 60
+        devices, seen = [], set()
+        for d in (bn.get("devices") or [])[:32]:
+            if not isinstance(d, dict):
+                continue
+            ip = str(d.get("ip") or "").strip()[:64]
+            try:
+                dev = int(d.get("device") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not ip or dev <= 0 or (ip, dev) in seen:
+                continue
+            seen.add((ip, dev))
+            devices.append({"ip": ip, "device": dev,
+                            "name": str(d.get("name") or "")[:60]})
+        bn["devices"] = devices
+        return {"bus": bus, "modules": modules, "mstp": mstp, "bacnet": bn}
 
     def save_config(self) -> None:
         atomic_write(CONFIG_PATH, json.dumps(self.config, indent=2, ensure_ascii=False))
@@ -683,15 +731,106 @@ class App:
 
         with self.lock:
             if self._bn is None:
-                self._bn = bacnet.BacnetClient(timeout=2.0, delay=0.02)
+                # FLEXPOLL_BACNET_PORT: tweede instantie op dezelfde machine (of
+                # een test naast een draaiende testslave) kan niet óók 47808
+                # binden. Antwoorden komen toch naar onze bronpoort terug.
+                port = _as_int(os.environ.get("FLEXPOLL_BACNET_PORT"), bacnet.BACNET_PORT)
+                self._bn = bacnet.BacnetClient(port=port or bacnet.BACNET_PORT,
+                                               timeout=2.0, delay=0.02)
+                # Na een reboot of herstart is de FD-registratie weg. Stilletjes
+                # opnieuw aanmelden, anders werkt scannen over de router niet
+                # meer en lijkt het netwerk stuk. Mislukt het, dan gaat de scan
+                # gewoon door (lees-acties zijn unicast).
+                bbmd = self.config.get("bacnet") or {}
+                if bbmd.get("bbmd"):
+                    try:
+                        self._bn.register_foreign_device(
+                            bbmd["bbmd"], bbmd.get("bbmd_port", 47808),
+                            bbmd.get("ttl", 60), wait=1.0)
+                        self.add_log("info", f"Foreign Device opnieuw aangemeld bij "
+                                             f"BBMD {bbmd['bbmd']}")
+                    except Exception as exc:               # noqa: BLE001
+                        self.add_log("warn", f"BBMD {bbmd['bbmd']} niet bereikbaar: {exc}")
             return self._bn
 
-    def bn_whois(self, subnet: str) -> list[dict]:
+    def bn_whois(self, subnet: str, ip: str = "") -> list[dict]:
         import bacnet
 
         client = self.bacnet_client()
-        nets = [subnet] if subnet else bacnet.local_broadcasts()
-        return client.whois(timeout=3.0, subnets=nets)
+        if not client.fd_keepalive():
+            self.add_log("warn", "BBMD niet bereikbaar — Foreign Device-registratie vervallen")
+        if ip:
+            # Eén toestel rechtstreeks aanspreken: de broadcast is hier niet
+            # alleen nutteloos (router), hij maakt de scan ook onnodig traag.
+            found = client.whois(timeout=2.5, subnets=[], unicast=[ip])
+        else:
+            nets = [subnet] if subnet else bacnet.local_broadcasts()
+            found = client.whois(timeout=3.0, subnets=nets)
+        return found
+
+    def _remember_device(self, ip: str, device: int, name: str = "") -> None:
+        with self.lock:
+            bn = self.config.setdefault("bacnet", {**DEFAULT_BACNET, "devices": []})
+            devices = bn.setdefault("devices", [])
+            if not any(d["ip"] == ip and d["device"] == device for d in devices):
+                devices.append({"ip": ip, "device": int(device), "name": name or ""})
+                bn["devices"] = devices[-32:]
+                self.save_config()
+                self.add_log("info", f"BACnet-toestel toegevoegd: device {device} op {ip}")
+
+    def bn_add_device(self, ip: str, device: int = 0) -> dict:
+        """Toestel toevoegen op IP; device-id leeg → unicast Who-Is naar dat IP.
+
+        Dit is de route voor toestellen achter een router: lezen is unicast, dus
+        zodra wij het adres kennen werkt alles — ook zonder BBMD.
+        """
+        import bacnet
+
+        ip = str(ip or "").strip()
+        if not ip:
+            raise bacnet.BacnetError("IP-adres verplicht")
+        client = self.bacnet_client()
+        if not client.fd_keepalive():
+            self.add_log("warn", "BBMD niet bereikbaar — Foreign Device-registratie vervallen")
+        dev = _as_int(device, 0)
+        if dev <= 0:
+            found = client.whois(timeout=2.5, subnets=[], unicast=[ip])
+            if not found:
+                raise bacnet.BacnetError(
+                    f"geen I-Am van {ip} — antwoordt het toestel op UDP 47808? "
+                    "Vul anders het device-id zelf in.")
+            entry = found[0]
+        else:
+            entry = client.device_info(ip, dev)
+        self._remember_device(entry["ip"], entry["device"], entry.get("name") or "")
+        return entry
+
+    def bn_forget_device(self, ip: str, device: int) -> None:
+        with self.lock:
+            bn = self.config.setdefault("bacnet", {**DEFAULT_BACNET, "devices": []})
+            keep = [d for d in bn.get("devices", [])
+                    if not (d["ip"] == ip and d["device"] == _as_int(device, 0))]
+            bn["devices"] = keep
+            self.save_config()
+
+    def bn_bbmd(self, ip: str, port: int = 47808, ttl: int = 60) -> dict:
+        """BBMD instellen en ons meteen als Foreign Device aanmelden."""
+        import bacnet
+
+        ip = str(ip or "").strip()
+        port = min(65535, max(1, _as_int(port, 47808) or 47808))
+        ttl = min(3600, max(0, _as_int(ttl, 60)))
+        with self.lock:
+            bn = self.config.setdefault("bacnet", {**DEFAULT_BACNET, "devices": []})
+            bn.update({"bbmd": ip, "bbmd_port": port, "ttl": ttl})
+            self.save_config()
+        client = self.bacnet_client()
+        if not ip:
+            client.fd = None
+            return {"ok": True, "registered": False}
+        res = client.register_foreign_device(ip, port, ttl)
+        self.add_log("info", f"Foreign Device aangemeld bij BBMD {ip}:{port} (TTL {ttl}s)")
+        return res
 
     def bn_points(self, ip: str, device: int, limit: int = 80) -> dict:
         import bacnet
@@ -931,6 +1070,10 @@ class App:
                     "baud_choices": BAUD_CHOICES,
                 },
                 "modules": modules,
+                "bacnet": {
+                    **self.config.get("bacnet", DEFAULT_BACNET),
+                    "fd": (self._bn.fd_status() if self._bn else None),
+                },
                 "last_poll": self.last_poll,
                 "next_poll": self.next_poll,
                 "polling": self.polling,
@@ -944,6 +1087,10 @@ class App:
 
     # ------------------------------------------------------------------ actions
     def apply_config(self, payload: dict) -> dict:
+        # Een client die enkel modules/bus post (curl, oude UI) mag de BACnet-
+        # toestellenlijst niet wissen: die staat niet in zijn payload.
+        if "bacnet" not in payload:
+            payload = {**payload, "bacnet": self.config.get("bacnet") or {}}
         new = self._normalize(payload)
         with self.lock:
             old_sig = self._desired_bus_signature()
@@ -1280,8 +1427,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bacnet/whois":
             q = parse_qs(urlparse(self.path).query)
             subnet = (q.get("subnet") or [""])[0]
+            ip = (q.get("ip") or [""])[0]
             try:
-                return self._json(200, {"devices": self.app.bn_whois(subnet)})
+                return self._json(200, {"devices": self.app.bn_whois(subnet, ip),
+                                        "state": self.app.state()})
             except Exception as exc:                       # noqa: BLE001
                 return self._error(502, f"BACnet: {exc}")
         if path == "/api/bacnet/ede.zip":
@@ -1362,6 +1511,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.app.close_bus()
                 self.app.wake.set()
                 return self._json(200, self.app.state())
+            if path == "/api/bacnet/device":
+                ip = str(body.get("ip") or "").strip()
+                try:
+                    entry = self.app.bn_add_device(ip, _as_int(body.get("device"), 0))
+                    return self._json(200, {"ok": True, "device": entry,
+                                            "state": self.app.state()})
+                except Exception as exc:                   # noqa: BLE001
+                    return self._error(502, f"BACnet: {exc}")
+            if path == "/api/bacnet/device/remove":
+                try:
+                    self.app.bn_forget_device(str(body.get("ip") or ""),
+                                              _as_int(body.get("device"), 0))
+                    return self._json(200, {"ok": True, "state": self.app.state()})
+                except Exception as exc:                   # noqa: BLE001
+                    return self._error(400, f"BACnet: {exc}")
+            if path == "/api/bacnet/bbmd":
+                try:
+                    res = self.app.bn_bbmd(str(body.get("ip") or ""),
+                                           _as_int(body.get("port"), 47808),
+                                           _as_int(body.get("ttl"), 60))
+                    return self._json(200, {**res, "state": self.app.state()})
+                except Exception as exc:                   # noqa: BLE001
+                    return self._error(502, f"BACnet: {exc}")
             if path == "/api/bacnet/points":
                 ip = str(body.get("ip") or "")
                 if not ip:

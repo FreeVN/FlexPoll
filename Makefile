@@ -26,6 +26,7 @@ check:
 		app.py devices.py modbus_rtu.py modbus_tcp.py bacnet.py sim.py modbus_tcp_slave.py tests/bacnet_slave.py
 	node --check static/app.js
 	@$(PY) tests/mstp_selftest.py
+	@$(PY) tests/bacnet_routing_test.py
 	@$(PY) -c "import bacnet as b; \
 	assert b._subnet_broadcast('192.168.20.219','24')=='192.168.20.255'; \
 	assert b._subnet_broadcast('10.1.2.3','255.255.0.0')=='10.1.255.255'; \

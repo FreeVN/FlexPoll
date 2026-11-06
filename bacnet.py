@@ -2,9 +2,17 @@
 # Copyright 2026 Free van Nieuwenhove
 """Minimale BACnet/IP-client (Who-Is, ReadProperty, WriteProperty) — enkel stdlib.
 
-Bewust beperkt: unicast naar één toestel per keer, geen routing, geen
-ReadPropertyMultiple. Genoeg om een toestel te vinden, punten te lezen/schrijven
-en een EDE-lijst te trekken.
+Bewust beperkt: één toestel per keer, geen ReadPropertyMultiple. Genoeg om een
+toestel te vinden, punten te lezen/schrijven en een EDE-lijst te trekken.
+
+Routing: een broadcast gaat niet door een router. Daarom twee uitwegen, allebei
+zonder dat wij zelf een BBMD worden:
+
+* **Foreign Device** — we melden ons aan bij een bestaande BBMD (BVLC 0x05) en
+  herhalen die registratie vóór de TTL verloopt. De BBMD stuurt de broadcasts
+  van zijn subnet unicast naar ons door.
+* **Unicast-probe** — een Who-Is rechtstreeks naar het IP van één toestel. Lezen
+  (ReadProperty) is toch al unicast, dus alleen de discovery heeft een route nodig.
 """
 
 from __future__ import annotations
@@ -17,6 +25,13 @@ import sys
 import time
 
 BACNET_PORT = 47808
+
+# BVLC-functiecodes (het eerste byte na 0x81 is de functie).
+BVLC_RESULT = 0x00
+BVLC_FORWARDED_NPDU = 0x04
+BVLC_REGISTER_FD = 0x05
+BVLC_ORIGINAL_UNICAST = 0x0A
+BVLC_ORIGINAL_BROADCAST = 0x0B
 
 # Wat wij per antwoord aankunnen: geen segmentatie (0), 1476 bytes (5). Zonder dit veld
 # juist te zetten weigert een toestel dat zelf niet kan segmenteren elk groot antwoord.
@@ -130,6 +145,20 @@ ABORT_REASONS = {
     8: "application-exceeded-reply-time", 9: "out-of-resources", 10: "tsm-timeout",
     11: "apdu-too-long",
 }
+
+
+def _as_int(value, default: int = 0) -> int:
+    """Property-waarde veilig naar int; parser kan ook lijsten/strings teruggeven."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return default
+    return default
 
 
 def _enum_from(buf: bytes, i: int):
@@ -542,6 +571,8 @@ class BacnetClient:
         self.sock.bind((bind_ip, port))
         self.timeout = timeout
         self._inv = random.randint(0, 180)
+        # Foreign Device-registratie: {"ip", "port", "ttl", "expires"} of None.
+        self.fd: dict | None = None
 
     def close(self) -> None:
         try:
@@ -559,6 +590,13 @@ class BacnetClient:
             raise BacnetError(f"versturen mislukt: {exc}") from None
 
     def _recv(self, deadline: float):
+        """Wacht op een NPDU en geef (apdu, src) terug.
+
+        Een BBMD kan een NPDU doorsturen als *Forwarded-NPDU* (0x04): dan staan er
+        nog 6 bytes origineel adres tussen de BVLC-kop en de NPDU. Wie die offset
+        negeert, leest het B/IP-adres als NPDU-versie en ziet elk antwoord als
+        ongeldig — precies het symptoom \"BBMD werkt wel, FlexPoll vindt niets\".
+        """
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -570,7 +608,18 @@ class BacnetClient:
                 raise BacnetError("timeout — geen antwoord") from None
             if len(data) < 8 or data[0] != 0x81:
                 continue
-            npdu = data[4:]
+            fn = data[1]
+            if fn not in (BVLC_ORIGINAL_UNICAST, BVLC_ORIGINAL_BROADCAST, BVLC_FORWARDED_NPDU):
+                continue                       # result/register-FD/BDT: geen NPDU
+            offset = 10 if fn == BVLC_FORWARDED_NPDU else 4
+            if fn == BVLC_FORWARDED_NPDU and len(data) >= 10:
+                # Het origineel B/IP-adres staat in de kop: dat is het toestel,
+                # niet de BBMD. Zonder dit lees je later van het BBMD-adres.
+                orig_ip = socket.inet_ntoa(data[4:8])
+                orig_port = int.from_bytes(data[8:10], "big")
+                if orig_ip not in ("0.0.0.0", ""):
+                    src = (orig_ip, orig_port or BACNET_PORT)
+            npdu = data[offset:]
             if not npdu or npdu[0] != 0x01:
                 continue
             if npdu[1] & 0x20:            # netwerklaag-bericht (bv. Who-Is)
@@ -635,8 +684,122 @@ class BacnetClient:
             if pdu_type in (0x50, 0x60, 0x70):          # error / reject / abort
                 raise BacnetServerError(describe_apdu_error(apdu, what))
 
+    # ------------------------------------------------------------ foreign device
+    def fd_status(self) -> dict | None:
+        if not self.fd:
+            return None
+        return {
+            "bbmd": self.fd["ip"],
+            "port": self.fd["port"],
+            "ttl": self.fd["ttl"],
+            "remaining": max(0, int(self.fd["expires"] - time.time())),
+        }
+
+    def register_foreign_device(self, bbmd_ip: str, bbmd_port: int = BACNET_PORT,
+                                ttl: int = 60, wait: float = 2.0) -> dict:
+        """Meld ons aan bij een BBMD (BVLC Register-Foreign-Device, 0x05).
+
+        De BBMD zet ons in zijn FDT en stuurt de broadcasts van zijn subnet
+        unicast naar ons door. Zonder die registratie blijft een Who-Is binnen
+        ons eigen subnet steken. TTL 0 = afmelden.
+        """
+        if not bbmd_ip:
+            raise BacnetError("BBMD-adres ontbreekt")
+        ttl = max(0, min(65535, int(ttl)))
+        packet = bytes([0x81, BVLC_ORIGINAL_UNICAST, 0x00, 0x06, BVLC_REGISTER_FD]) \
+            + struct.pack(">H", ttl)
+        try:
+            self.sock.sendto(packet, (bbmd_ip, int(bbmd_port)))
+        except OSError as exc:
+            raise BacnetError(f"BBMD onbereikbaar: {exc}") from None
+        if ttl == 0:
+            self.fd = None
+            return {"ok": True, "bbmd": bbmd_ip, "ttl": 0}
+        deadline = time.time() + wait
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise BacnetError(
+                    f"geen antwoord van BBMD {bbmd_ip}:{bbmd_port} — draait daar een "
+                    "BBMD en is UDP 47808 open?")
+            self.sock.settimeout(remaining)
+            try:
+                data, _src = self.sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            if len(data) < 6 or data[0] != 0x81 or data[1] != BVLC_RESULT:
+                continue
+            code = int.from_bytes(data[4:6], "big")
+            if code != 0:
+                # 1 = register-FD-denied:BBMD weigert (FDT vol of beleid).
+                raise BacnetError(f"BBMD weigert registratie (result {code})")
+            self.fd = {"ip": bbmd_ip, "port": int(bbmd_port), "ttl": ttl,
+                       "expires": time.time() + ttl}
+            return {"ok": True, "bbmd": bbmd_ip, "port": int(bbmd_port), "ttl": ttl}
+
+    def fd_keepalive(self) -> bool:
+        """Herhaal de registratie vóór de TTL verloopt (op TTL/2).
+
+        Vergeten is de klassieke bug: het werkt vijf minuten en daarna niet meer,
+        zonder foutmelding — de BBMD heeft ons stil uit zijn FDT gegooid.
+
+        Een doodgelopen BBMD mag de rest niet blokkeren: dit is een herkansing,
+        geen voorwaarde. Mislukt ze, dan vergeten we de registratie en zeggen we
+        het — anders wacht elke scan opnieuw twee seconden op een pakket dat
+        nooit komt, en lijkt de hele BACnet-tab stuk.
+        """
+        fd = self.fd
+        if not fd or not fd.get("ttl"):
+            return True
+        if time.time() < fd["expires"] - fd["ttl"] / 2.0:
+            return True
+        try:
+            self.register_foreign_device(fd["ip"], fd["port"], fd["ttl"])
+            return True
+        except BacnetError:
+            self.fd = None
+            return False
+
     # ---------------------------------------------------------------- services
-    def whois(self, timeout: float = 3.0, subnets: list[str] | None = None) -> list[dict]:
+    def _device_entry(self, ip: str, dev: int, vendor: int = 0) -> dict:
+        entry = {"device": dev, "ip": ip, "vendor": vendor, "name": "", "model": ""}
+        try:
+            entry["name"] = self.read_property(ip, 8, dev, PROP_OBJECT_NAME, timeout=0.8)
+        except BacnetError:
+            pass
+        try:
+            entry["model"] = self.read_property(ip, 8, dev, 70, timeout=0.8)
+        except BacnetError:
+            pass
+        return entry
+
+    def device_info(self, ip: str, device: int) -> dict:
+        """Naam/model van één toestel — voor handmatig toevoegen op IP.
+
+        Faalt de naamleesactie, dan antwoordt dat toestel niet (of blokkeert het
+        ReadProperty). Dat is een echte fout, geen lege kaart: zo komen er geen
+        dode toestellen in de lijst.
+        """
+        dev = int(device or 0)
+        if not ip or dev <= 0:
+            raise BacnetError("ip en device-id zijn verplicht")
+        entry = {"device": dev, "ip": ip, "vendor": 0, "name": "", "model": ""}
+        try:
+            entry["name"] = self.read_property(ip, 8, dev, PROP_OBJECT_NAME)
+        except BacnetError as exc:
+            raise BacnetError(f"device {dev} op {ip} antwoordt niet: {exc}") from None
+        try:
+            entry["model"] = self.read_property(ip, 8, dev, 70, timeout=0.8)
+        except BacnetError:
+            pass
+        try:
+            entry["vendor"] = _as_int(self.read_property(ip, 8, dev, 120, timeout=0.8), 0)
+        except (BacnetError, TypeError, ValueError):
+            pass
+        return entry
+
+    def whois(self, timeout: float = 3.0, subnets: list[str] | None = None,
+              unicast: list[str] | None = None) -> list[dict]:
         apdu = b"\x10\x08"
         npdu = bytes([0x01, 0x20, 0xFF, 0xFF, 0x00, 0xFF]) + apdu
         packet = bytes([0x81, 0x0B]) + struct.pack(">H", len(npdu) + 4) + npdu
@@ -644,6 +807,13 @@ class BacnetClient:
         for s in subnets or []:
             if s and s not in targets:
                 targets.append(s)
+        # Unicast-probe: één Who-Is rechtstreeks naar een toestel-IP. Zo vind je
+        # een toestel achter een router zonder BBMD (de meeste stacks antwoorden
+        # op een unicast Who-Is; de Who-Is hoeft geen broadcast te zijn).
+        for u in unicast or []:
+            u = (u or "").strip()
+            if u and u not in targets:
+                targets.append(u)
         for target in targets:
             try:
                 self.sock.sendto(packet, (target, BACNET_PORT))
@@ -671,19 +841,7 @@ class BacnetClient:
             vendor = vals[2] if len(vals) > 2 and isinstance(vals[2], int) else 0
             if dev in found:
                 continue
-            entry = {
-                "device": dev, "ip": src[0], "vendor": vendor,
-                "name": "", "model": "",
-            }
-            try:
-                entry["name"] = self.read_property(src[0], 8, dev, PROP_OBJECT_NAME, timeout=0.8)
-            except BacnetError:
-                pass
-            try:
-                entry["model"] = self.read_property(src[0], 8, dev, 70, timeout=0.8)
-            except BacnetError:
-                pass
-            found[dev] = entry
+            found[dev] = self._device_entry(src[0], dev, vendor)
         return sorted(found.values(), key=lambda d: d["device"])
 
     def read_property(self, ip: str, obj_type: int, instance: int, prop: int,

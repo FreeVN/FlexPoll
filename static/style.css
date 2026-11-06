@@ -129,6 +129,10 @@ main.layout > .bacnet-panel { margin: 12px 26px; background: #fff; border: 1px s
 .bn-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .bn-head .field { margin: 0; }
 .bn-head input { width: 190px; }
+.bn-head2 { margin-bottom: 8px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.bn-head2 input { width: 150px; }
+.bn-head2 #bn-ip, .bn-head2 #bn-bbmd { width: 170px; }
+.bn-note-top { margin: 0 0 14px; }
 .bn-status { font-size: 11px; color: #6b7785; }
 .bn-devices { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
 .bndev { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
@@ -141,6 +145,11 @@ main.layout > .bacnet-panel { margin: 12px 26px; background: #fff; border: 1px s
 .bndev-main b { font-size: 13px; }
 .bndev-main i { font-size: 10.5px; color: #8b96a3; font-style: normal; }
 .bndev-go { font-size: 11px; color: var(--red); font-weight: 700; }
+.bndev-saved { font-size: 9px; color: #8b96a3; border: 1px solid var(--line); border-radius: 6px;
+               padding: 1px 5px; text-transform: uppercase; letter-spacing: .04em; }
+.bndev-x { border: 0; background: transparent; color: #9aa5b3; font-size: 16px; line-height: 1;
+           cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.bndev-x:hover { color: var(--red); background: #f6f8fb; }
 .bn-detail { margin-top: 18px; max-width: 920px; }
 .bn-dhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .bn-dhead h3 { margin: 0; font-size: 14px; }

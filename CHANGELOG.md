@@ -13,6 +13,27 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Toestel toevoegen op IP (BACnet/IP).** Discovery was broadcast-only, dus een
+  toestel achter een router was onbereikbaar — terwijl lezen zelf unicast is. Je
+  kan nu een IP ingeven; laat je het device-id leeg, dan stuurt FlexPoll een
+  unicast Who-Is naar dat adres. De lijst wordt bewaard in `config.json` en
+  overleeft een scan. *Gevraagd door St Bernardus.*
+- **Foreign Device-registratie bij een BBMD.** Wie ook wil **scannen** over een
+  router, meldt zich aan bij de BBMD van dat subnet (BVLC
+  `Register-Foreign-Device`, TTL met automatische keepalive op TTL/2 en
+  herregistratie na een herstart). Forwarded-NPDU's worden correct ontleed en het
+  originele toesteladres wordt als bron gebruikt. Een onbereikbare BBMD laat de
+  registratie vervallen met een waarschuwing; lezen en toevoegen-op-IP blijven
+  werken. FlexPoll blijft zelf **geen** BBMD. *Gevraagd door St Bernardus.*
+
+### Tests
+
+- `tests/bacnet_routing_test.py`: Forwarded-NPDU-offset, Foreign
+  Device-registratie (ok/deny), keepalive en de unicast-probe, tegen een
+  gesimuleerde BBMD op loopback (draait mee in `make check`).
+
 ## [1.5.2] — 2026-11-01
 
 ### Fixed

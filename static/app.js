@@ -1155,6 +1155,14 @@
         points: m.points || [],
         unit: m.type === "clivet_slave" ? m.unit : undefined,
       })),
+      // Zonder dit blok wist elke gewone save de BBMD-instelling en de
+      // handmatig toegevoegde toestellen (die staan niet in `modules`).
+      bacnet: {
+        bbmd: $("#bn-bbmd") ? $("#bn-bbmd").value.trim() : "",
+        bbmd_port: $("#bn-bbmd-port") ? Number($("#bn-bbmd-port").value) || 47808 : 47808,
+        ttl: $("#bn-bbmd-ttl") ? Number($("#bn-bbmd-ttl").value) || 60 : 60,
+        devices: (state && state.bacnet && state.bacnet.devices) || [],
+      },
     };
   }
 
@@ -1257,6 +1265,38 @@
   let bnDevices = [];
   let bnCurrent = null;
 
+  function bnSaved() {
+    return (state && state.bacnet && state.bacnet.devices) || [];
+  }
+
+  // Opgeslagen toestellen (uit config.json) en scanresultaten in één lijst.
+  // Zonder deze samenvoeging verdwijnt een handmatig toegevoegd toestel zodra
+  // je één keer scant — en dat is precies het toestel achter de router.
+  function bnMerge(scanned) {
+    const saved = bnSaved();
+    const key = (d) => `${d.ip}|${d.device}`;
+    const out = [];
+    for (const d of scanned || []) {
+      if (!out.some((x) => key(x) === key(d))) {
+        out.push({ ...d, saved: saved.some((s) => key(s) === key(d)) });
+      }
+    }
+    for (const d of saved) {
+      if (!out.some((x) => key(x) === key(d))) {
+        out.push({ ...d, vendor: 0, model: "", saved: true });
+      }
+    }
+    return out.sort((a, b) => a.device - b.device);
+  }
+
+  function bnFdStatus(fd) {
+    const el = $("#bn-bbmd-status");
+    if (!el) return;
+    el.textContent = fd
+      ? `aangemeld bij ${fd.bbmd}:${fd.port} · nog ${fd.remaining}s`
+      : "";
+  }
+
   function bnValueText(p) {
     if (!p.ok) return "—";
     if (typeof p.value === "boolean") return p.value ? "AAN" : "UIT";
@@ -1275,6 +1315,13 @@
     } catch (err) {
       $("#bn-hint").textContent = "";
     }
+    const cfg = (state && state.bacnet) || {};
+    if (!$("#bn-bbmd").value) $("#bn-bbmd").value = cfg.bbmd || "";
+    $("#bn-bbmd-port").value = cfg.bbmd_port || 47808;
+    $("#bn-bbmd-ttl").value = cfg.ttl ?? 60;
+    bnFdStatus(cfg.fd);
+    bnDevices = bnMerge(bnDevices);
+    bnRenderDevices();
   }
 
   async function bnScan() {
@@ -1283,10 +1330,14 @@
     $("#bn-scan").disabled = true;
     try {
       const res = await api(`/api/bacnet/whois?subnet=${encodeURIComponent(subnet)}`);
-      bnDevices = res.devices || [];
+      if (res.state) applyState(res.state);
+      bnDevices = bnMerge(res.devices || []);
       $("#bn-status").textContent = bnDevices.length ? `${bnDevices.length} toestel(len)` : "geen toestel gevonden";
+      if (!(res.devices || []).length && bnSaved().length) {
+        $("#bn-status").textContent = `${bnSaved().length} opgeslagen toestel(len) — broadcast bereikt ze niet`;
+      }
     } catch (err) {
-      bnDevices = [];
+      bnDevices = bnMerge([]);
       $("#bn-status").textContent = "fout: " + err.message;
     } finally {
       $("#bn-scan").disabled = false;
@@ -1294,16 +1345,83 @@
     }
   }
 
+  // Toestel toevoegen op IP (device-id leeg = unicast Who-Is naar dat adres).
+  async function bnAddDevice() {
+    const ip = $("#bn-ip").value.trim();
+    const dev = $("#bn-dev").value.trim();
+    if (!ip) { toast("Vul een IP-adres in", "err"); return; }
+    $("#bn-add").disabled = true;
+    $("#bn-status").textContent = "toestel opzoeken…";
+    try {
+      const res = await api("/api/bacnet/device", {
+        method: "POST",
+        body: JSON.stringify({ ip, device: dev ? Number(dev) : 0 }),
+      });
+      if (res.state) applyState(res.state);
+      bnDevices = bnMerge([res.device, ...bnDevices]);
+      bnRenderDevices();
+      $("#bn-ip").value = "";
+      $("#bn-dev").value = "";
+      $("#bn-status").textContent = `device ${res.device.device} toegevoegd`;
+      toast(`Device ${res.device.device} toegevoegd`, "ok");
+    } catch (err) {
+      $("#bn-status").textContent = "fout: " + err.message;
+      toast("toevoegen mislukt: " + err.message, "err");
+    } finally {
+      $("#bn-add").disabled = false;
+    }
+  }
+
+  async function bnForget(key) {
+    const [ip, dev] = key.split("|");
+    try {
+      const res = await api("/api/bacnet/device/remove", {
+        method: "POST",
+        body: JSON.stringify({ ip, device: Number(dev) }),
+      });
+      if (res.state) applyState(res.state);
+      bnDevices = bnMerge(bnDevices.filter((d) => !(d.ip === ip && d.device === Number(dev))));
+      bnRenderDevices();
+      toast("toestel verwijderd", "ok");
+    } catch (err) {
+      toast("verwijderen mislukt: " + err.message, "err");
+    }
+  }
+
+  async function bnBbmd() {
+    const ip = $("#bn-bbmd").value.trim();
+    const port = Number($("#bn-bbmd-port").value) || 47808;
+    const ttl = Number($("#bn-bbmd-ttl").value) || 60;
+    $("#bn-bbmd-status").textContent = ip ? "aanmelden…" : "afmelden…";
+    $("#bn-bbmd-apply").disabled = true;
+    try {
+      const res = await api("/api/bacnet/bbmd", {
+        method: "POST",
+        body: JSON.stringify({ ip, port, ttl }),
+      });
+      if (res.state) applyState(res.state);
+      bnFdStatus(res.state && res.state.bacnet && res.state.bacnet.fd);
+      toast(ip ? `aangemeld bij ${ip}` : "BBMD uitgeschakeld", "ok");
+    } catch (err) {
+      $("#bn-bbmd-status").textContent = "fout: " + err.message;
+      toast("BBMD: " + err.message, "err");
+    } finally {
+      $("#bn-bbmd-apply").disabled = false;
+    }
+  }
+
   function bnRenderDevices() {
     const host = $("#bn-devices");
     if (!bnDevices.length) { host.innerHTML = ""; return; }
     host.innerHTML = bnDevices.map((d, i) => `
-      <button class="bndev" data-i="${i}">
+      <div class="bndev" data-i="${i}" role="button" tabindex="0">
         <span class="bndev-id">${d.device}</span>
         <span class="bndev-main"><b>${esc(d.name || "(naamloos)")}</b>
           <i>${esc(d.ip)} · vendor ${d.vendor}${d.model ? " · " + esc(d.model) : ""}</i></span>
+        ${d.saved ? `<span class="bndev-saved">opgeslagen</span>` : ""}
+        ${d.saved ? `<button class="bndev-x" data-bndel="${esc(d.ip)}|${d.device}" title="Verwijderen" aria-label="Verwijderen">×</button>` : ""}
         <span class="bndev-go">punten →</span>
-      </button>`).join("");
+      </div>`).join("");
   }
 
   function bnEdeHref() {
@@ -1961,7 +2079,11 @@
       applyTab();
     });
     $("#bn-scan").addEventListener("click", bnScan);
+    $("#bn-add").addEventListener("click", bnAddDevice);
+    $("#bn-bbmd-apply").addEventListener("click", bnBbmd);
     $("#bn-devices").addEventListener("click", (e) => {
+      const del = e.target.closest("[data-bndel]");
+      if (del) { e.stopPropagation(); bnForget(del.dataset.bndel); return; }
       const btn = e.target.closest(".bndev");
       if (btn) bnLoadPoints(bnDevices[Number(btn.dataset.i)]);
     });

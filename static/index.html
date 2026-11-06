@@ -163,6 +163,23 @@
         <span class="bn-status" id="bn-status"></span>
         <span class="bn-hint" id="bn-hint"></span>
       </div>
+      <div class="bn-head bn-head2">
+        <div class="field"><label for="bn-ip">Toestel op IP</label>
+          <input type="text" id="bn-ip" placeholder="192.168.20.50" inputmode="decimal"></div>
+        <div class="field"><label for="bn-dev">Device-id</label>
+          <input type="text" id="bn-dev" placeholder="leeg = zoeken" inputmode="numeric"></div>
+        <button class="btn" id="bn-add">Toevoegen</button>
+        <div class="field"><label for="bn-bbmd">BBMD (Foreign Device)</label>
+          <input type="text" id="bn-bbmd" placeholder="leeg = geen BBMD"></div>
+        <div class="field"><label for="bn-bbmd-port">Poort</label>
+          <input type="text" id="bn-bbmd-port" value="47808" inputmode="numeric"></div>
+        <div class="field"><label for="bn-bbmd-ttl">TTL (s)</label>
+          <input type="text" id="bn-bbmd-ttl" value="60" inputmode="numeric"></div>
+        <button class="btn ghost" id="bn-bbmd-apply">Aanmelden</button>
+        <span class="bn-status" id="bn-bbmd-status"></span>
+      </div>
+      <p class="bn-note bn-note-top">Toestel achter een router? Vul zijn IP in — lezen is unicast en werkt zonder
+        netwerkaanpassing. Wil je daar ook <b>scannen</b>, meld je dan aan bij de BBMD van dat subnet.</p>
       <div class="bn-devices" id="bn-devices"></div>
       <div class="bn-detail" id="bn-detail" hidden>
         <div class="bn-dhead">
