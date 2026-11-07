@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-11-07
+
 ### Added
 
 - **Toestel toevoegen op IP (BACnet/IP).** Discovery was broadcast-only, dus een
