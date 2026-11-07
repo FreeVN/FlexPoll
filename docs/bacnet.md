@@ -82,6 +82,10 @@ BBMD hoort door het netwerk of de gebouwcontroller geleverd te worden. Let op:
 een BBMD werkt met IP-adressen in de payload, dus **NAT** tussen de subnetten
 breekt het.
 
+Deze werking is end-to-end getest tegen een onafhankelijke BBMD (bacpypes3) en
+een echt toestel achter een router; de opstelling staat in
+`tests/bbmd-lab/` in de repo (Docker, twee bruggen, geen NAT).
+
 ## Waarom zie ik geen toestellen?
 
 In volgorde van waarschijnlijkheid:

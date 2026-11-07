@@ -28,11 +28,32 @@ voor de UI, `python3 app.py --version` en de git-tag.
   registratie vervallen met een waarschuwing; lezen en toevoegen-op-IP blijven
   werken. FlexPoll blijft zelf **geen** BBMD. *Gevraagd door St Bernardus.*
 
+### Fixed
+
+- **Register-Foreign-Device had het verkeerde packetformaat.** Het is een
+  BVLC-functie: `81 05 00 06 <TTL>` (zes bytes). De eerste versie stuurde
+  `81 0A 00 06 05 <TTL>` — original-unicast met 0x05 in de payload; een echte
+  BBMD negeert dat en je ziet alleen een timeout. Gevonden tegen bacpypes3,
+  niet tegen onze eigen simulator.
+- **De Who-Is ging na de registratie niet naar de BBMD.** Een lokale broadcast
+  bereikt hem nooit; de client stuurt hem nu als Forwarded-NPDU (`0x04`) naar
+  de BBMD, met het eigen B/IP-adres in de kop.
+- **Verrijking at het ontvangstvenster op.** Naam/model lezen (0,8 s per
+  toestel) gebeurde binnen de scan-lus, waardoor het tweede antwoord — bij een
+  BBMD steevast het echte toestel na de BBMD — buiten de deadline viel. Nu
+  worden eerst alle I-Am's verzameld en daarna verrijkt.
+- **NUL-voorloop in device-namen** wordt ook bij handmatig toevoegen gestript.
+
 ### Tests
 
 - `tests/bacnet_routing_test.py`: Forwarded-NPDU-offset, Foreign
-  Device-registratie (ok/deny), keepalive en de unicast-probe, tegen een
-  gesimuleerde BBMD op loopback (draait mee in `make check`).
+  Device-registratie (ok/deny), keepalive, Who-Is-via-BBMD en de
+  unicast-probe, tegen een gesimuleerde BBMD op loopback (draait mee in
+  `make check`).
+- `tests/bbmd-lab/`: handmatige Docker-lab met een **echte** BBMD (bacpypes3
+  `BIPBBMD`) en een **echt** toestel achter een router — twee bruggen, geen
+  NAT. Bewijst: zonder BBMD geen scan, met BBMD device 2001 + 3001, en
+  unicast-lezen werkt altijd. Zie de README daar.
 
 ## [1.5.2] — 2026-11-01
 

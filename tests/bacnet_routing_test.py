@@ -83,8 +83,8 @@ def _serve_once(s: socket.socket, result: int, hits: list) -> None:
         return
     except OSError:
         return                                  # socket intussen gesloten
-    if len(data) >= 7 and data[4] == 0x05:      # BVLC Register-Foreign-Device
-        hits.append(int.from_bytes(data[5:7], "big"))
+    if len(data) >= 6 and data[1] == 0x05:      # BVLC Register-Foreign-Device
+        hits.append(int.from_bytes(data[4:6], "big"))
         # BVLC-Result: 81 00 00 06 <result 2 bytes> (lengte = 6, totaal 6 bytes)
         reply = bytes([0x81, 0x00, 0x00, 0x06]) + struct.pack(">H", result)
         s.sendto(reply, src)
@@ -186,11 +186,54 @@ def test_unicast_probe() -> None:
     assert found[0]["device"] > 0, f"device-id ontbreekt: {found[0]}"
 
 
+
+def test_fd_whois_forwarded() -> None:
+    """Na aanmelding moet de Who-Is als Forwarded-NPDU naar de BBMD gaan.
+
+    Een lokale broadcast bereikt de BBMD nooit; zonder deze stap vindt een
+    foreign device dus niets, ook al is de registratie perfect gelukt.
+    """
+    c = client(47911)
+    srv = _fd_server(47912)
+    import threading
+
+    seen: list[bytes] = []
+    stop: list[int] = []
+
+    def loop() -> None:
+        while not stop:
+            try:
+                data, src = srv.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if len(data) >= 6 and data[1] == 0x05:
+                srv.sendto(bytes([0x81, 0x00, 0x00, 0x06, 0x00, 0x00]), src)
+            elif data[1] == 0x04:
+                seen.append(data)
+
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    try:
+        c.register_foreign_device("127.0.0.1", 47912, ttl=30, wait=1.0)
+        c.whois(timeout=0.5, subnets=[], unicast=["127.0.0.1"])
+        time.sleep(0.1)
+        assert seen, "Who-Is ging niet als Forwarded-NPDU naar de BBMD"
+        pkt = seen[0]
+        assert pkt[4:8] == socket.inet_aton("127.0.0.1"), f"origineel adres fout: {pkt[:10].hex()}"
+        assert pkt[10:12] == b"\x01\x20", "NPDU-vector ontbreekt in de forwarded NPDU"
+    finally:
+        stop.append(1)
+        srv.close()
+        c.close()
+
 print("BACnet-routering zelftest")
 check("Forwarded-NPDU ontleden", test_forwarded_npdu)
 check("Foreign Device aanmelden", test_register_ok)
 check("BBMD weigert registratie", test_register_denied)
 check("Keepalive vóór TTL", test_keepalive)
+check("Who-Is via BBMD", test_fd_whois_forwarded)
 check("Unicast-probe", test_unicast_probe)
 
 if FAILED:

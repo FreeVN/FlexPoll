@@ -706,8 +706,11 @@ class BacnetClient:
         if not bbmd_ip:
             raise BacnetError("BBMD-adres ontbreekt")
         ttl = max(0, min(65535, int(ttl)))
-        packet = bytes([0x81, BVLC_ORIGINAL_UNICAST, 0x00, 0x06, BVLC_REGISTER_FD]) \
-            + struct.pack(">H", ttl)
+        # Register-Foreign-Device is een BVLC-functie (0x05), geen NPDU: het
+        # pakket is 81 05 00 06 <ttl 2> — zes bytes totaal. De oude variant zette
+        # 0x0A (original-unicast) als functie en 0x05 in de payload; een echte
+        # BBMD (bacpypes3) negeert dat volledig, waarna je een timeout ziet.
+        packet = bytes([0x81, BVLC_REGISTER_FD, 0x00, 0x06]) + struct.pack(">H", ttl)
         try:
             self.sock.sendto(packet, (bbmd_ip, int(bbmd_port)))
         except OSError as exc:
@@ -734,8 +737,20 @@ class BacnetClient:
                 # 1 = register-FD-denied:BBMD weigert (FDT vol of beleid).
                 raise BacnetError(f"BBMD weigert registratie (result {code})")
             self.fd = {"ip": bbmd_ip, "port": int(bbmd_port), "ttl": ttl,
-                       "expires": time.time() + ttl}
+                       "expires": time.time() + ttl,
+                       "local_ip": self._local_ip(bbmd_ip, bbmd_port)}
             return {"ok": True, "bbmd": bbmd_ip, "port": int(bbmd_port), "ttl": ttl}
+
+    def _local_ip(self, peer_ip: str, peer_port: int) -> str:
+        """Ons eigen bronadres zoals de BBMD het ziet (voor Forwarded-NPDU)."""
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect((peer_ip, int(peer_port)))
+            ip = probe.getsockname()[0]
+            probe.close()
+            return ip
+        except OSError:
+            return "0.0.0.0"
 
     def fd_keepalive(self) -> bool:
         """Herhaal de registratie vóór de TTL verloopt (op TTL/2).
@@ -764,11 +779,13 @@ class BacnetClient:
     def _device_entry(self, ip: str, dev: int, vendor: int = 0) -> dict:
         entry = {"device": dev, "ip": ip, "vendor": vendor, "name": "", "model": ""}
         try:
-            entry["name"] = self.read_property(ip, 8, dev, PROP_OBJECT_NAME, timeout=0.8)
+            name = self.read_property(ip, 8, dev, PROP_OBJECT_NAME, timeout=0.8)
+            entry["name"] = str(name).replace("\x00", "").strip()
         except BacnetError:
             pass
         try:
-            entry["model"] = self.read_property(ip, 8, dev, 70, timeout=0.8)
+            model = self.read_property(ip, 8, dev, 70, timeout=0.8)
+            entry["model"] = str(model).replace("\x00", "").strip()
         except BacnetError:
             pass
         return entry
@@ -785,11 +802,13 @@ class BacnetClient:
             raise BacnetError("ip en device-id zijn verplicht")
         entry = {"device": dev, "ip": ip, "vendor": 0, "name": "", "model": ""}
         try:
-            entry["name"] = self.read_property(ip, 8, dev, PROP_OBJECT_NAME)
+            entry["name"] = str(self.read_property(ip, 8, dev, PROP_OBJECT_NAME)) \
+                .replace("\x00", "").strip()
         except BacnetError as exc:
             raise BacnetError(f"device {dev} op {ip} antwoordt niet: {exc}") from None
         try:
-            entry["model"] = self.read_property(ip, 8, dev, 70, timeout=0.8)
+            entry["model"] = str(self.read_property(ip, 8, dev, 70, timeout=0.8)) \
+                .replace("\x00", "").strip()
         except BacnetError:
             pass
         try:
@@ -819,6 +838,19 @@ class BacnetClient:
                 self.sock.sendto(packet, (target, BACNET_PORT))
             except OSError:
                 pass
+        # Aangemeld als Foreign Device? Dan moet de Who-Is ook *naar de BBMD*
+        # als Forwarded-NPDU (BVLC 0x04). Een lokale broadcast komt daar nooit:
+        # de BBMD luistert op zijn eigen subnet, niet op het onze.
+        fd = self.fd
+        if fd and fd.get("local_ip") and fd["local_ip"] != "0.0.0.0":
+            orig = socket.inet_aton(fd["local_ip"]) \
+                + struct.pack(">H", self.sock.getsockname()[1])
+            forwarded = bytes([0x81, BVLC_FORWARDED_NPDU]) \
+                + struct.pack(">H", len(npdu) + 4 + 6) + orig + npdu
+            try:
+                self.sock.sendto(forwarded, (fd["ip"], fd["port"]))
+            except OSError:
+                pass
         found: dict[int, dict] = {}
         end = time.time() + timeout
         while time.time() < end:
@@ -841,7 +873,15 @@ class BacnetClient:
             vendor = vals[2] if len(vals) > 2 and isinstance(vals[2], int) else 0
             if dev in found:
                 continue
-            found[dev] = self._device_entry(src[0], dev, vendor)
+            # Alleen verzamelen: het verrijken (naam/model) kost tot 1,6 s per
+            # toestel en mag het ontvangstvenster niet opeten. Anders verlies je
+            # precies de toestellen die als tweede antwoorden — bij een BBMD is
+            # dat steevast het echte toestel na de BBMD zelf.
+            found[dev] = {"device": dev, "ip": src[0], "vendor": vendor,
+                          "name": "", "model": ""}
+        for dev, entry in found.items():
+            info = self._device_entry(entry["ip"], dev, entry["vendor"])
+            entry["name"], entry["model"] = info["name"], info["model"]
         return sorted(found.values(), key=lambda d: d["device"])
 
     def read_property(self, ip: str, obj_type: int, instance: int, prop: int,

@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright 2026 Free van Nieuwenhove
+# Lab-opstelling: twee Docker-bruggen + een echte BBMD en een echt BACnet-toestel.
+# Zie README.md. `docker compose up -d` na `./setup-host.sh`.
+name: flexpoll-bbmd-lab
+
+services:
+  device:
+    build: .
+    cap_add: [NET_ADMIN]
+    command: ["python", "/app/device.py"]
+    volumes: ["./:/app:ro"]
+    networks:
+      netb:
+        ipv4_address: 172.28.20.10
+
+  bbmd:
+    build: .
+    cap_add: [NET_ADMIN]
+    command: ["python", "/app/bbmd.py"]
+    volumes: ["./:/app:ro"]
+    networks:
+      netb:
+        ipv4_address: 172.28.20.11
+
+  flexpoll:
+    build: .
+    cap_add: [NET_ADMIN]
+    command: ["sh", "-c", "cd /opt/flexpoll && FLEXPOLL_DATA=/tmp/data python app.py --port 8099"]
+    volumes:
+      - "../../:/opt/flexpoll:ro"
+    ports: ["18099:8099"]
+    networks:
+      neta:
+        ipv4_address: 172.28.10.10
+
+networks:
+  neta:
+    driver: bridge
+    ipam:
+      config: [{subnet: 172.28.10.0/24}]
+  netb:
+    driver: bridge
+    ipam:
+      config: [{subnet: 172.28.20.0/24}]
