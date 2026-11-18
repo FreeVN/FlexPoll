@@ -13,6 +13,14 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`POST /api/config` wiste blokken die de client niet meestuurde.** Een payload
+  met enkel `modules` zette het `bus`-blok op zijn defaults (lege `port` →
+  "geen seriële poort gekozen") en enkel `bus` wiste de modulelijst. Nu worden
+  `bus`, `modules`, `mstp` en `bacnet` uit de lopende config overgenomen als ze
+  ontbreken; expliciet leegmaken blijft mogelijk met bv. `"modules": []`.
+
 ## [1.8.0] — 2026-11-18
 
 ### Added
