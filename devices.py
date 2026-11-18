@@ -73,6 +73,17 @@ TYPES: dict[str, dict] = {
                     4: "Vbtw", 5: "Vmax"},
         "units": {0: "l/s", 1: "m³/h", 2: "Pa", 3: "WC", 4: "°", 5: "cfm"},
     },
+    "metz_si4": {
+        "name": "Metz MR-SI4",
+        "brand": "Metz Connect",
+        "group": "Metz",
+        "kind": "S0-teller module",
+        "sub": "4 pulsingangen",
+        "desc": "S0-tellers · status · factoren",
+        "icon": "input",
+        "accent": "#00838F",
+        "baud_hint": "19200 8E1",
+    },
     "grundfos": {
         "name": "Grundfos CIM 200",
         "brand": "Grundfos",
@@ -299,6 +310,13 @@ GRUNER_BUSFAIL = {0: "Laatste setpunt", 1: "Dicht", 2: "Open", 3: "Vmin",
 GRUNER_SP_SOURCE = {0: "Analoog in, analoog uit", 1: "Bus-setpunt, analoog uit",
                     2: "Bus-setpunt, uit = reg 10", 3: "Analoog in, uit = reg 10"}
 GRUNER_UNITS = {0: "l/s", 1: "m³/h", 2: "Pa", 3: "WC", 4: "°", 5: "cfm"}
+
+# Metz Connect MR-SI4 — S0-tellermodule (software description Modbus RTU V2.4).
+# Register 32..35 (WP) kiest de rekenformule; alleen bit 0 is geldig.
+METZ_WP = {
+    0: "0 — (IZ−IT)/IE + AZ, dan × WI × WU",
+    1: "1 — (IZ−IT)/IE × WI × WU + AZ",
+}
 # Statusregister 104 — alleen de bits die een technieker iets zeggen.
 GRUNER_STATUS_BITS = [
     (0, "EEPROM-fout 1"), (1, "EEPROM-fout 2"),
@@ -553,6 +571,72 @@ def read_gruner(bus: Bus, mod: dict) -> dict:
             "status": st,
             "status_txt": ", ".join(status),
             "firmware": fw,
+        },
+    }
+
+
+def _u48(words: list[int]) -> int:
+    """uint48 over drie registers, hoog woord eerst (zoals Metz het stuurt)."""
+    return (words[0] << 32) | (words[1] << 16) | words[2]
+
+
+def read_metz_si4(bus: Bus, mod: dict) -> dict:
+    """Metz Connect MR-SI4 — 4 S0-pulsingangen op 19200 8E1.
+
+    Twee blokken: input registers 0..20 (tellend, read-only) en holding
+    20..51 + 65 (configuratie, EEPROM). De berekende tellerstand BZ volgt uit
+    IZ, IT, AZ, IE, WI, WU, WP en ZS — wij rekenen niets na, we tonen wat het
+    toestel zelf rapporteert en de factoren die erbij horen.
+    """
+    a = mod["address"]
+    try:
+        di = bus.read_discrete_inputs(a, 0, 4)
+    except ModbusError:
+        di = [None] * 4
+    ir = bus.read_input(a, 0, 21)                 # 0..20
+    iz = [_u48(ir[3 * i:3 * i + 3]) for i in range(4)]
+    bz = [((ir[12 + 2 * i] << 16) | ir[13 + 2 * i]) for i in range(4)]
+    hr0 = bus.read_holding(a, 0, 20)              # 0..19: IT (uint48) + AZ (uint32)
+    it = [_u48(hr0[3 * i:3 * i + 3]) for i in range(4)]
+    az = [((hr0[12 + 2 * i] << 16) | hr0[13 + 2 * i]) for i in range(4)]
+    hr = bus.read_holding(a, 20, 32)              # 20..51
+    ie = hr[0:4]
+    wi = hr[4:8]
+    wu = hr[8:12]
+    wp = hr[12:16]
+    zs = hr[16:20]
+    ta = hr[20:24]
+    ez = [((hr[24 + 2 * i] << 16) | hr[25 + 2 * i]) for i in range(4)]
+
+    channels = []
+    for i in range(4):
+        digits = (zs[i] >> 8) & 0xFF
+        decimals = zs[i] & 0xFF
+        channels.append({
+            "ch": i + 1,
+            "closed": None if di[i] is None else bool(di[i]),
+            "iz": iz[i],
+            "it": it[i],
+            "az": az[i],
+            "bz": bz[i],
+            "ez": ez[i],
+            "ie": ie[i],
+            "wi": wi[i],
+            "wu": wu[i],
+            "wp": wp[i] & 1,
+            "wp_txt": METZ_WP.get(wp[i] & 1, ""),
+            "digits": digits,
+            "decimals": decimals,
+            "key": bool(ta[i] & 1),
+            # BZ als getal met de decimalen uit ZS, zodat de UI niet hoeft te raden
+            "bz_txt": f"{bz[i] / (10 ** decimals):.{decimals}f}" if decimals <= 6 else str(bz[i]),
+        })
+
+    return {
+        "serial": None,
+        "values": {
+            "channels": channels,
+            "inputs": sum(1 for c in channels if c["closed"]),
         },
     }
 
@@ -1066,6 +1150,7 @@ READERS = {
     "em18u": read_em18u,
     "belimo": read_belimo,
     "gruner_vav": read_gruner,
+    "metz_si4": read_metz_si4,
     "grundfos": read_grundfos,
     "wilo_stratos": read_wilo,
     "lg_ub40": read_lg_ub40,
@@ -1352,6 +1437,34 @@ def perform(bus: Bus, mod: dict, op: str, data: dict) -> str:
             bus.write_register(addr, 2, val)
             return f"commando -> {GRUNER_COMMANDS[val]}"
         raise ActionError("actie '%s' niet ondersteund voor Gruner VAV" % op)
+
+    if mtype == "metz_si4":
+        ch = int(data.get("ch", 0))
+        if not 1 <= ch <= 4:
+            raise ActionError("kanaal moet 1..4 zijn")
+        if op == "set_az":
+            val = int(data.get("value", -1))
+            if not 0 <= val <= 0xFFFFFFFF:
+                raise ActionError("beginstand moet 0..4294967295 zijn")
+            bus.write_registers(addr, 12 + 2 * (ch - 1), [(val >> 16) & 0xFFFF, val & 0xFFFF])
+            return f"IN{ch} beginstand (AZ) -> {val}"
+        if op == "set_ie":
+            val = int(data.get("value", -1))
+            if not 1 <= val <= 65535:
+                raise ActionError("pulsen per eenheid moet 1..65535 zijn")
+            bus.write_register(addr, 20 + (ch - 1), val)
+            return f"IN{ch} pulsen/eenheid (IE) -> {val}"
+        if op == "set_key":
+            val = 1 if int(data.get("value", 0)) else 0
+            bus.write_register(addr, 40 + (ch - 1), val)
+            return f"IN{ch} toets -> {'vrij' if val else 'geblokkeerd'}"
+        if op == "set_ez":
+            val = int(data.get("value", -1))
+            if not 0 <= val <= 0xFFFFFFFF:
+                raise ActionError("teller moet 0..4294967295 zijn")
+            bus.write_registers(addr, 44 + 2 * (ch - 1), [(val >> 16) & 0xFFFF, val & 0xFFFF])
+            return f"IN{ch} eenvoudige teller (EZ) -> {val}"
+        raise ActionError(f"actie '{op}' niet ondersteund voor Metz MR-SI4")
 
     if mtype == "wilo_stratos":
         if op == "set_onoff":

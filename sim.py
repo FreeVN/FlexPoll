@@ -97,6 +97,46 @@ class SimBus:
         self.extra_coils = {9: [1, 1, 0, 0, 0, 0, 0], 30: [1, 0, 1, 0, 0, 0, 0, 0]}
         self.extra_di = {9: [0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}
 
+        # --- 13 = Metz Connect MR-SI4 (4 S0-tellingangen) ---
+        iz = [123456, 98765, 55555, 4321]
+        bz = [616, 494, 277, 21]
+        ir13: dict[int, int] = {}
+        for i, v in enumerate(iz):                     # 0..11: uint48, 3 regs per kanaal
+            ir13[3 * i] = (v >> 32) & 0xFFFF
+            ir13[3 * i + 1] = (v >> 16) & 0xFFFF
+            ir13[3 * i + 2] = v & 0xFFFF
+        for i, v in enumerate(bz):                     # 12..19: uint32, 2 regs per kanaal
+            ir13[12 + 2 * i] = (v >> 16) & 0xFFFF
+            ir13[13 + 2 * i] = v & 0xFFFF
+        ir13[20] = 0b0101                              # ingangen 1 en 3 gesloten
+        self.extra_ir[13] = ir13
+        hr13: dict[int, int] = {65: 0x5315}            # 19200 8E1, magic 0x53
+        it_vals = [120000, 95000, 55000, 4000]         # IT: kopie telling bij toetsdruk
+        az_vals = [50, 25, 10, 5]                      # AZ: beginstand (uint32)
+        for i, v in enumerate(it_vals):
+            hr13[3 * i] = (v >> 32) & 0xFFFF
+            hr13[3 * i + 1] = (v >> 16) & 0xFFFF
+            hr13[3 * i + 2] = v & 0xFFFF
+        for i, v in enumerate(az_vals):
+            hr13[12 + 2 * i] = (v >> 16) & 0xFFFF
+            hr13[13 + 2 * i] = v & 0xFFFF
+        for i, v in enumerate([2000, 1000, 2000, 1000]):
+            hr13[20 + i] = v                           # IE pulsen per eenheid
+        for i, v in enumerate([40, 1, 1, 1]):
+            hr13[24 + i] = v                           # WI stroomfactor
+        for i, v in enumerate([200, 1, 1, 1]):
+            hr13[28 + i] = v                           # WU spanningsfactor
+        for i, v in enumerate([1, 0, 0, 0]):
+            hr13[32 + i] = v                           # WP formuletype
+        for i in range(4):
+            hr13[36 + i] = (7 << 8) | 1                 # ZS: 7 cijfers, 1 decimaal
+            hr13[40 + i] = 1                            # TA: toets vrij
+        for i, v in enumerate([100, 200, 300, 400]):
+            hr13[44 + 2 * i] = (v >> 16) & 0xFFFF       # EZ eenvoudige teller
+            hr13[45 + 2 * i] = v & 0xFFFF
+        self.extra_hr[13] = hr13
+        self.extra_di[13] = [1, 0, 1, 0]
+
     def open(self):
         pass
 
@@ -107,7 +147,7 @@ class SimBus:
         return True
 
     def _known(self, addr):
-        if addr not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 20, 21, 30):
+        if addr not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 20, 21, 30):
             raise ModbusTimeout(f"geen antwoord van adres {addr}")
 
     # ---------------------------------------------------------------- discovery
@@ -117,6 +157,10 @@ class SimBus:
             return {"vendor": "Gruner AG", "product": "327 VAV", "revision": "V1.16",
                     "vendor_url": None, "product_name": "Gruner VAV controller",
                     "model": "327 VAV", "app_name": None, "objects": 3}
+        if addr == 13:
+            return {"vendor": "METZ CONNECT GmbH", "product": "MR-SI4",
+                    "revision": "V2.3", "vendor_url": None, "product_name": None,
+                    "model": None, "app_name": None, "objects": 3}
         raise ModbusException(1)
 
     def report_server_id(self, addr):

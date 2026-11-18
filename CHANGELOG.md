@@ -15,14 +15,22 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ### Added
 
+- **Metz MR-SI4-tegel (Modbus RTU).** S0-tellermodule met 4 pulsingangen, op
+  adres 12 van de testbank gevonden via de framing-sweep. Toont per ingang de
+  status (open/gesloten), de ruwe pulsteller IZ, de berekende tellerstand BZ met
+  het aantal decimalen uit register ZS, de beginstand AZ, pulsen per eenheid IE,
+  de transformatiefactoren WI/WU en het formuletype WP; de toetsstatus en de
+  eenvoudige teller EZ staan eronder. Je kan AZ, IE en EZ schrijven en de toets
+  vrijgeven/blokkeren. Registerbeeld uit de Metz *Software description Modbus RTU
+  V2.4*.
 - **Scan over alle framings.** Naast *Scan adressen* staat nu een vinkje **alle
   framings**: de tool probeert elke baudrate/pariteit/stopbits tot een deelnemer
   antwoordt, want je weet bij een onbekend toestel noch het adres noch de
   framing. Elke treffer toont de framing waarin hij antwoordde, en `+ toevoegen`
   biedt aan de businstelling over te nemen. De oorspronkelijke framing wordt na
   de scan teruggezet en **niet** opgeslagen — een scan mag de configuratie niet
-  veranderen. (Aanleiding: een onbekende MR-SI4 op de testbank die alleen op
-  19200 8E1 antwoordde terwijl de bus op 9600 8N1 stond.)
+  veranderen. (Aanleiding: dezelfde MR-SI4 antwoordde alleen op 19200 8E1 terwijl
+  de bus op 9600 8N1 stond.)
 
 ## [1.7.0] — 2026-11-18
 

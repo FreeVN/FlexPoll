@@ -1347,6 +1347,19 @@ class App:
                 return self._hit(addr, "belimo", confidence=96,
                                  reason=f"device-id: {_id_txt()}", ident=ident)
 
+        if "metz" in blob:
+            # Metz heeft meerdere MR-modules met een eigen map; alleen de MR-SI4
+            # heeft een tegel. Zeg bij de rest wél wie het is, maar verzin geen
+            # registers: die gaan naar de algemene deelnemer.
+            if "si4" in blob:
+                return self._hit(addr, "metz_si4", confidence=99,
+                                 reason=f"device-id: {_id_txt()}", ident=ident)
+            return self._hit(addr, "generic", confidence=60,
+                             reason=f"Metz-module zonder eigen profiel — device-id: {_id_txt()}",
+                             ident=ident,
+                             name=(ident.get("product_name") or ident.get("product")
+                                   or "Metz-module"))
+
         # 0) Gruner VAV zonder device-id. Drie registers samen zijn genoeg:
         # reg 130 = het eigen adres (dat kan een ander niet verzinnen), reg 201 =
         # de eenheid (0..6) en er is géén Vnom-register 110. Zo wordt hij niet
@@ -1364,6 +1377,20 @@ class App:
                     return self._hit(addr, "gruner_vav", confidence=94,
                                      reason=f"reg 130 = eigen adres, eenheid reg 201 = {unit_sel}, "
                                             "geen Vnom-register", ident=ident)
+        except ModbusError:
+            pass
+
+        # 0b) Metz MR-SI4 zonder device-id: register 65 (baud/pariteit) draagt de
+        # magic 0x53 in het hoogste byte — dat is Metz-eigen — en het tellerblok
+        # 0..20 is als 21 input-registers leesbaar.
+        try:
+            baud_code = bus.read_holding(addr, 65, 1)[0]
+            if (baud_code & 0xFF00) == 0x5300:
+                ir = bus.read_input(addr, 0, 21)
+                if len(ir) == 21:
+                    return self._hit(addr, "metz_si4", confidence=88,
+                                     reason="reg 65 met magic 0x53 + tellerblok 0–20 leesbaar",
+                                     ident=ident)
         except ModbusError:
             pass
 

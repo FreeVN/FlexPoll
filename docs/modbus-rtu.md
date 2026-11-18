@@ -109,6 +109,27 @@ Twee dingen die anders zijn dan bij de Belimo VAV:
 - **Het setpunt is read-only zolang de setpuntbron analoog staat** (reg 122 = 0 of
   3). De tegel zegt dat met zoveel woorden in plaats van een kale exception.
 
+### Metz MR-SI4
+
+S0-tellermodule met **4 pulsingangen** (DIN EN 62053-31 klasse A), standaard
+19200 8E1. De tegel toont per ingang de status, de ruwe pulsteller **IZ**
+(48-bit) en de berekende tellerstand **BZ** met het aantal decimalen uit **ZS**.
+Daaronder staan pulsen per eenheid (**IE**), de transformatiefactoren **WI/WU**,
+het formuletype **WP**, de toetsstatus en de eenvoudige teller **EZ**.
+
+| Wat je kan schrijven | Register | Let op |
+|---|---|---|
+| Beginstand **AZ** | holding 12–19 (uint32 per kanaal) | verschuift BZ, EEPROM |
+| Pulsen per eenheid **IE** | holding 20–23 | bepaalt de schaal, EEPROM |
+| Eenvoudige teller **EZ** | holding 44–51 (uint32) | vrij te zetten, los van BZ |
+| Toets vrij/blokkeer | holding 40–43 (bit 0) | de toets kopieert IZ → IT |
+
+**IZ zelf is read-only** — dat is bewust: de pulsteller kan niet via de bus
+gewist worden, alleen met de toets op het toestel (die IZ naar IT kopieert).
+De berekende stand BZ rekent de tool niet na; ze komt van het toestel, met de
+factoren die ernaast staan. Register 65 (baud/pariteit, magic `0x53`) wordt
+**niet** door de tegel geschreven: framing wijzig je niet per ongeluk.
+
 ## Punten toevoegen
 
 Klik op **+** bij een module (of gebruik **Punt toevoegen** in het menu) en vul in:

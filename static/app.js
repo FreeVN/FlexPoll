@@ -131,7 +131,7 @@
   // ------------------------------------------------------------------ palette
   function renderPalette() {
     const host = $("#palette-tiles");
-    const ORDER = ["Siemens", "Belimo", "Gruner", "Pompen", "Warmtepomp"];
+    const ORDER = ["Siemens", "Belimo", "Gruner", "Metz", "Pompen", "Warmtepomp"];
     const groups = new Map();
     for (const [key, t] of Object.entries(TYPES)) {
       if (!tabAllows(key, t)) continue;
@@ -558,6 +558,26 @@
             <button class="btn tiny" type="button" data-act="gcmdsend">Stuur</button>
           </div>`;
       }
+
+      case "metz_si4":
+        return `
+          <div class="chips">
+            <span class="chip" data-role="inchip">—</span>
+            <span class="chip" data-role="cfgchip">—</span>
+          </div>
+          <div class="mzlist">
+            ${[1, 2, 3, 4].map((ch) => `
+            <div class="mzrow" data-ch="${ch}">
+              <span class="led"></span><b>IN${ch}</b>
+              <span class="val" data-role="bz">—</span>
+              <span class="muted" data-role="iz">—</span>
+              <input type="number" min="0" step="1" data-role="az" placeholder="beginstand" title="AZ — beginstand van de teller (register ${11 + 2 * ch})">
+              <button class="btn tiny" type="button" data-act="setaz">Zet</button>
+            </div>`).join("")}
+          </div>
+          <div class="kv" style="margin-top:7px"><span>Pulsen / eenheid</span><b data-role="ie">—</b></div>
+          <div class="kv"><span>Factoren</span><b data-role="fac">—</b></div>
+          <div class="sp-hint" data-role="mzhint">—</div>`;
 
       case "wilo_stratos":
         return `
@@ -1117,6 +1137,46 @@
         if (bf && document.activeElement !== bf && v.bus_fail != null) bf.value = String(v.bus_fail);
         const bfrow = bf && bf.closest(".ctrl-row");
         if (bfrow && v.bus_fail_txt) bfrow.title = `nu: ${v.bus_fail_txt}`;
+      }
+
+      if (m.type === "metz_si4") {
+        const chs = v.channels || [];
+        const ic = card.querySelector('[data-role="inchip"]');
+        if (ic) {
+          ic.textContent = `${v.inputs ?? 0}/4 gesloten`;
+          ic.className = "chip " + ((v.inputs ?? 0) > 0 ? "blue" : "");
+        }
+        const cc = card.querySelector('[data-role="cfgchip"]');
+        if (cc) {
+          const d = chs[0] ? `${chs[0].digits} cijfers · ${chs[0].decimals} dec` : "";
+          cc.textContent = d ? `ZS ${d}` : "—";
+        }
+        for (const c of chs) {
+          const row = card.querySelector(`.mzrow[data-ch="${c.ch}"]`);
+          if (!row) continue;
+          row.classList.toggle("closed", !!c.closed);
+          row.classList.toggle("open", c.closed === false);
+          const bz = row.querySelector('[data-role="bz"]');
+          if (bz) bz.textContent = c.bz_txt != null ? String(c.bz_txt).replace(".", ",") : "—";
+          const iz = row.querySelector('[data-role="iz"]');
+          if (iz) iz.textContent = isNum(c.iz) ? `IZ ${num(c.iz, 0)}` : "";
+          const az = row.querySelector('[data-role="az"]');
+          if (az) {
+            az.placeholder = isNum(c.az) ? `nu ${num(c.az, 0)}` : "beginstand";
+            if (document.activeElement !== az && az.value === "" && isNum(c.az)) az.value = String(c.az);
+          }
+        }
+        setText(card, "ie", chs.map((c) => num(c.ie, 0)).join(" · "));
+        setText(card, "fac", chs.length
+          ? `WI ${num(chs[0].wi, 0)} · WU ${num(chs[0].wu, 0)} · WP ${chs[0].wp}`
+          : "—");
+        const hint = card.querySelector('[data-role="mzhint"]');
+        if (hint && chs.length) {
+          const openKeys = chs.filter((c) => c.key).length;
+          hint.innerHTML = `${esc(chs[0].wp_txt || "")}`
+            + ` · toets ${openKeys === 4 ? "vrij" : openKeys === 0 ? "geblokkeerd" : `${openKeys}/4 vrij`}`
+            + ` · EZ ${chs.map((c) => num(c.ez, 0)).join(" / ")}`;
+        }
       }
 
       if (m.type === "grundfos") {
@@ -2016,6 +2076,16 @@
           doAction(id, "set_vminmax", { vmin_flow: vmin, vmax_flow: vmax });
         } else {
           doAction(id, "set_vminmax", { vmin, vmax });
+        }
+        return;
+      }
+      if (e.target.closest('[data-act="setaz"]')) {
+        const row = e.target.closest(".mzrow");
+        const inp = row.querySelector('[data-role="az"]');
+        const val = Math.round(Number(inp.value));
+        if (!isFinite(val) || val < 0) { toast("Vul een beginstand in", "err"); return; }
+        if (confirm(`Beginstand (AZ) van IN${row.dataset.ch} naar ${val} zetten?\n\nDit verschuift de berekende tellerstand BZ.`)) {
+          doAction(id, "set_az", { ch: Number(row.dataset.ch), value: val });
         }
         return;
       }

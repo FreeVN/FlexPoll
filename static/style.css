@@ -400,6 +400,14 @@ button.io:hover { border-color: #c9d5e2; background: #fff; }
 .io.off .led { background: var(--red); box-shadow: 0 0 0 1px #E4002B, 0 0 8px rgba(228,0,43,.4); }
 .io.off small { color: var(--red-dark); }
 
+.mzlist { margin-top: 9px; }
+.mzrow { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 0; border-top: 1px dashed #eef2f6; }
+.mzrow b { min-width: 30px; font-size: 10px; color: #6b7785; }
+.mzrow .val { font-weight: 700; min-width: 72px; text-align: right; font-variant-numeric: tabular-nums; }
+.mzrow .muted { font-size: 9px; color: #9aa5b1; flex: 1; }
+.mzrow input { width: 78px; height: 24px; border-radius: 6px; border: 1px solid var(--line); padding: 0 5px; font: inherit; font-size: 10.5px; }
+.mzrow .led { width: 8px; height: 8px; border-radius: 50%; background: #cfd6dd; flex: 0 0 auto; }
+.mzrow.closed .led { background: #16a34a; box-shadow: 0 0 0 1px #16a34a; }
 .sweepbox { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: #6b7785; cursor: pointer; user-select: none; white-space: nowrap; }
 .sweepbox input { margin: 0; accent-color: var(--red); }
 .limrow { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 9px; padding-top: 8px; border-top: 1px dashed #eef2f6; }
