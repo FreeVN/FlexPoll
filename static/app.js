@@ -239,7 +239,7 @@
     if (activeTab === "rtu" && s.scanning && s.scan_progress) {
       const bar = $("#scanbar");
       bar.className = "scanbar show";
-      bar.innerHTML = `<span class="lbl">Scannen</span><span class="scanhit">adres ${s.scan_progress.current} van ${s.scan_progress.end}…</span>`;
+      bar.innerHTML = `<span class="lbl">Scannen</span><span class="scanhit">adres ${s.scan_progress.current} van ${s.scan_progress.end}…${s.scan_progress.framing ? ` <span class="chip blue">${esc(s.scan_progress.framing)}</span>` : ""}</span>`;
     }
   }
 
@@ -2268,19 +2268,24 @@
 
     $("#btn-scan").addEventListener("click", async () => {
       const btn = $("#btn-scan");
+      const sweep = $("#scan-sweep").checked;
       const from = Math.max(1, Math.min(247, parseInt($("#scan-from").value, 10) || 1));
       const to = Math.max(from, Math.min(247, parseInt($("#scan-to").value, 10) || from));
       $("#scan-from").value = from;
       $("#scan-to").value = to;
+      if (sweep && to - from + 1 > 64 &&
+          !confirm(`Alle framings over ${to - from + 1} adressen duurt lang (${Math.ceil((to - from + 1) * 10 * 0.35 / 60)} min). Doorgaan?`)) return;
       btn.disabled = true;
+      $("#scan-sweep").disabled = true;
       btn.textContent = "Scannen…";
       try {
-        const res = await api("/api/scan", { method: "POST", body: JSON.stringify({ start: from, end: to }) });
-        renderScan(res.found, from, to);
+        const res = await api("/api/scan", { method: "POST", body: JSON.stringify({ start: from, end: to, sweep }) });
+        renderScan(res.found, from, to, sweep);
       } catch (err) {
         toast("Scan mislukt: " + err.message, "err");
       } finally {
         btn.disabled = false;
+        $("#scan-sweep").disabled = false;
         btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg> Scan adressen`;
       }
     });
@@ -2295,15 +2300,15 @@
     return cards.length;
   }
 
-  function renderScan(found, from = 1, to = 32) {
+  function renderScan(found, from = 1, to = 32, sweep = false) {
     const bar = $("#scanbar");
     if (!found || !found.length) {
       bar.className = "scanbar show";
-      bar.innerHTML = `<span class="lbl">Scan ${from}–${to}</span><span class="scanhit">Geen enkele deelnemer antwoordde — check bedrading, baudrate en pariteit.</span>`;
+      bar.innerHTML = `<span class="lbl">Scan ${from}–${to}${sweep ? " · alle framings" : ""}</span><span class="scanhit">Geen enkele deelnemer antwoordde — check bedrading, baudrate en pariteit.</span>`;
       return;
     }
     bar.className = "scanbar show";
-    bar.innerHTML = `<span class="lbl">Scan ${from}–${to} · gevonden</span>` + found.map((h) => {
+    bar.innerHTML = `<span class="lbl">Scan ${from}–${to}${sweep ? " · alle framings" : ""} · gevonden</span>` + found.map((h) => {
       const conf = Number(h.confidence ?? 0);
       const cls = conf >= 90 ? "high" : conf >= 70 ? "mid" : "low";
       const id = h.ident ? [h.ident.vendor, h.ident.product, h.ident.revision]
@@ -2311,12 +2316,25 @@
       return `
       <span class="scanhit"><b>${h.address}</b> ${esc(h.name)}
         ${id ? `<span class="muted">· ${esc(id)}</span>` : ""}
+        ${h.framing ? `<span class="chip blue">${esc(h.framing)}</span>` : ""}
         ${h.type === "generic" ? '<span class="chip blue">ontdekt</span>' : ""}
         <span class="conf ${cls}" title="${esc(h.reason || "")}">${conf}%</span>
-        <button data-addr="${h.address}" data-mtype="${h.type}">+ toevoegen</button>
+        <button data-addr="${h.address}" data-mtype="${h.type}" data-framing="${esc(h.framing || "")}">+ toevoegen</button>
       </span>`;
     }).join("");
     bar.querySelectorAll("button").forEach((b) => b.addEventListener("click", async () => {
+      // Een sweep-hit kan op een ándere framing antwoorden dan de bus nu staat.
+      // Zonder die framing over te nemen zou de nieuwe tegel meteen offline zijn.
+      const frag = b.dataset.framing || "";
+      const m = frag.match(/^(\d+)\s+8([NEO])(\d)$/);
+      if (m && !(Number(m[1]) === Number($("#baud").value) &&
+                 m[2] === $("#parity").value && Number(m[3]) === Number($("#stopbits").value))) {
+        if (!confirm(`Dit toestel antwoordde op ${frag}, de bus staat anders.\n\nBusinstelling naar ${frag} zetten?`)) return;
+        $("#baud").value = m[1];
+        $("#parity").value = m[2];
+        $("#stopbits").value = m[3];
+        await saveConfig();
+      }
       await addModule(b.dataset.mtype, null);
       const mods = state.modules;
       const last = mods[mods.length - 1];

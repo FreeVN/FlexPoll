@@ -13,6 +13,17 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Scan over alle framings.** Naast *Scan adressen* staat nu een vinkje **alle
+  framings**: de tool probeert elke baudrate/pariteit/stopbits tot een deelnemer
+  antwoordt, want je weet bij een onbekend toestel noch het adres noch de
+  framing. Elke treffer toont de framing waarin hij antwoordde, en `+ toevoegen`
+  biedt aan de businstelling over te nemen. De oorspronkelijke framing wordt na
+  de scan teruggezet en **niet** opgeslagen — een scan mag de configuratie niet
+  veranderen. (Aanleiding: een onbekende MR-SI4 op de testbank die alleen op
+  19200 8E1 antwoordde terwijl de bus op 9600 8N1 stond.)
+
 ## [1.7.0] — 2026-11-18
 
 ### Added

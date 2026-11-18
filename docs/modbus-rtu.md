@@ -63,6 +63,23 @@ antwoordt daarop, en de stille toestellen storen alleen maar), en gokken op een
 type als de vingerafdruk dubbelzinnig is — dan staat er een lagere score en de
 reden in de tooltip.
 
+### Alle framings
+
+Weet je van een onbekend toestel **noch het adres, noch de baudrate**, vink dan
+**alle framings** aan naast *Scan adressen*. De tool probeert dan tien
+combinaties (1200/2400/4800/9600/19200/38400/57600/115200 met de gebruikelijke
+pariteit) en stopt met zoeken naar een adres zodra het gevonden is.
+
+- Elke treffer toont de framing waarin hij antwoordde, bv. `12 · MR-SI4 ·
+  19200 8E1 · 45%`.
+- **+ toevoegen** vraagt of de businstelling naar die framing mag — anders zou de
+  nieuwe tegel meteen offline staan.
+- Na de scan staat de bus **terug op de oorspronkelijke instelling** en die wordt
+  niet opgeslagen: een scan verandert je configuratie niet.
+- Reken op ± 10 s per framing voor 32 adressen; over 247 adressen duurt het
+  minuten. Beperk het bereik.
+
+
 ## Een module lezen
 
 Elke modulekaart toont:

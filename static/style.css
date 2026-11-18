@@ -400,6 +400,8 @@ button.io:hover { border-color: #c9d5e2; background: #fff; }
 .io.off .led { background: var(--red); box-shadow: 0 0 0 1px #E4002B, 0 0 8px rgba(228,0,43,.4); }
 .io.off small { color: var(--red-dark); }
 
+.sweepbox { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; color: #6b7785; cursor: pointer; user-select: none; white-space: nowrap; }
+.sweepbox input { margin: 0; accent-color: var(--red); }
 .limrow { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 9px; padding-top: 8px; border-top: 1px dashed #eef2f6; }
 .limrow label { font-size: 9.5px; font-weight: 700; color: #6b7785; text-transform: uppercase; letter-spacing: .04em; }
 .limrow input { width: 50px; height: 26px; border-radius: 7px; border: 1px solid var(--line); padding: 0 5px; font: inherit; font-size: 11px; }

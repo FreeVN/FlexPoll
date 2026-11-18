@@ -1145,49 +1145,93 @@ class App:
         with self.lock:
             return self.states.get(module_id, {})
 
-    def scan(self, start: int, end: int) -> list[dict]:
+    def scan(self, start: int, end: int, sweep: bool = False) -> list[dict]:
+        """Scan een adresbereik. Met `sweep` ook over alle gangbare framings.
+
+        Zonder sweep geldt de businstelling uit de bovenbalk. Met sweep probeert
+        de tool elke framing tot een adres antwoordt: dat is de enige manier om
+        een onbekende deelnemer te vinden als je noch zijn adres noch zijn
+        baudrate kent. De oorspronkelijke framing wordt daarna teruggezet en
+        **niet** opgeslagen — een scan mag de configuratie niet veranderen.
+        """
         start = max(1, min(247, int(start)))
         end = max(start, min(247, int(end)))
         found: list[dict] = []
         with self.lock:
             self.scanning = True
-            self.scan_progress = {"current": start, "end": end}
+            self.scan_progress = {"current": start, "end": end, "framing": None}
         try:
-            with self.lock:
-                bus = self.ensure_bus()
-                old_timeout = getattr(bus, "timeout", 0.5)
-                bus.timeout = 0.06
-                try:
-                    if getattr(bus, "serial", None) is not None:
-                        bus.serial.timeout = 0.06
-                except Exception:
-                    pass
-            try:
-                for addr in range(start, end + 1):
-                    # lock per adres: de UI/poller blijft tussendoor leefbaar
-                    with self.lock:
-                        self.scan_progress = {"current": addr, "end": end}
-                        hit = self._probe_address(bus, addr)
-                    if hit:
-                        found.append(hit)
-            finally:
-                with self.lock:
-                    bus.timeout = old_timeout
-                    try:
-                        if getattr(bus, "serial", None) is not None:
-                            bus.serial.timeout = old_timeout
-                    except Exception:
-                        pass
-            self.add_log("info", f"Scan {start}-{end}: {len(found)} module(s) gevonden")
+            found = self._scan_sweep(start, end) if sweep else self._scan_one(start, end)
+            self.add_log("info", f"Scan {start}-{end}"
+                                + (" (alle framings)" if sweep else "")
+                                + f": {len(found)} deelnemer(s) gevonden")
         finally:
             with self.lock:
                 self.scanning = False
         self.scan_progress = None
         return found
 
+    def _scan_one(self, start: int, end: int, framing: str | None = None) -> list[dict]:
+        found: list[dict] = []
+        with self.lock:
+            bus = self.ensure_bus()
+            old_timeout = getattr(bus, "timeout", 0.5)
+            bus.timeout = 0.06
+            try:
+                if getattr(bus, "serial", None) is not None:
+                    bus.serial.timeout = 0.06
+            except Exception:
+                pass
+        try:
+            for addr in range(start, end + 1):
+                # lock per adres: de UI/poller blijft tussendoor leefbaar
+                with self.lock:
+                    self.scan_progress = {"current": addr, "end": end, "framing": framing}
+                    hit = self._probe_address(bus, addr)
+                if hit:
+                    if framing:
+                        hit["framing"] = framing
+                    found.append(hit)
+        finally:
+            with self.lock:
+                bus.timeout = old_timeout
+                try:
+                    if getattr(bus, "serial", None) is not None:
+                        bus.serial.timeout = old_timeout
+                except Exception:
+                    pass
+        return found
+
+    def _scan_sweep(self, start: int, end: int) -> list[dict]:
+        orig = {k: self.config["bus"][k] for k in ("baud", "parity", "stopbits")}
+        found: list[dict] = []
+        seen: set[int] = set()
+        try:
+            for baud, parity, stop in self.FRAMINGS:
+                with self.lock:
+                    cur = (self.config["bus"]["baud"], self.config["bus"]["parity"],
+                           self.config["bus"]["stopbits"])
+                    if cur != (baud, parity, stop):
+                        self.config["bus"].update({"baud": baud, "parity": parity,
+                                                   "stopbits": stop})
+                        self.close_bus()
+                for hit in self._scan_one(start, end, framing=f"{baud} 8{parity}{stop}"):
+                    if hit["address"] in seen:
+                        continue
+                    seen.add(hit["address"])
+                    found.append(hit)
+        finally:
+            with self.lock:
+                self.config["bus"].update(orig)
+                self.close_bus()
+            self.wake.set()
+        return found
+
     FRAMINGS = [
         (9600, "N", 1), (9600, "E", 1), (19200, "E", 1), (19200, "N", 1),
         (38400, "E", 1), (115200, "E", 1), (4800, "E", 1),
+        # minder gangbaar, maar een onbekende deelnemer kan er staan
+        (2400, "E", 1), (1200, "E", 1), (57600, "E", 1),
     ]
 
     def framing_scan(self, addr: int) -> dict:
@@ -1604,7 +1648,8 @@ class Handler(BaseHTTPRequestHandler):
                 state = self.app.action(mid, op, body)
                 return self._json(200, {"state": state})
             if path == "/api/scan":
-                found = self.app.scan(int(body.get("start", 1)), int(body.get("end", 16)))
+                found = self.app.scan(int(body.get("start", 1)), int(body.get("end", 16)),
+                                      sweep=bool(body.get("sweep")))
                 return self._json(200, {"found": found})
             if path == "/api/framing":
                 res = self.app.framing_scan(int(body.get("address", 1)))
