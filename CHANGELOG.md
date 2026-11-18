@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.8.1] — 2026-11-18
+
 ### Fixed
 
 - **`POST /api/config` wiste blokken die de client niet meestuurde.** Een payload
