@@ -72,6 +72,21 @@ class SimBus:
                  100: 0x1234, 101: 0x5678, 102: 0x9ABC, 103: 410,
                  105: 4500, 106: 6000, 110: 0, 116: 1, 117: 1, 118: 1,
                  207: 10000, 208: 90, 212: 10000, 213: 60},
+            # 15 = Gruner VAV (327 VAV / GUAC). Bewust hetzelfde 0..8-blok als de
+            # Belimo, maar met reg 201 (eenheid) en zonder reg 110 (Vnom): dat is
+            # precies het verschil dat de scan-vingerafdruk moet herkennen.
+            15: {0: 3500, 1: 0, 2: 0, 3: 2, 4: 3600, 5: 3200, 6: 3400, 7: 520, 8: 1200,
+                 103: 116, 104: 0b0000000010000000, 105: 1500, 106: 9000,
+                 108: 0, 109: 120, 120: 220, 121: 1100, 122: 1, 130: 15, 131: 42,
+                 201: 1},
+            # 16 = onbekende deelnemer: antwoordt alleen op een leverancier-eigen
+            # blok 4000.., dus geen enkel bekend profiel matcht -> discovery-hit.
+            # 17 = dezelfde Gruner maar zonder device-id: test van de vingerafdruk-fallback.
+            17: {0: 4000, 1: 0, 2: 0, 3: 2, 4: 2800, 5: 2500, 6: 2700, 7: 430, 8: 900,
+                 103: 118, 104: 0, 105: 1000, 106: 9500,
+                 108: 1, 109: 120, 120: 150, 121: 1150, 122: 1, 130: 17, 131: 38,
+                 201: 1},
+            16: {4000: 7, 4001: 3, 4002: 1234},
         }
         self.extra_ir = {
             8: {1: 62, 2: 123, 3: 0, 4: 340, 5: 100, 6: 15, 7: 2870, 8: 2941,
@@ -92,8 +107,23 @@ class SimBus:
         return True
 
     def _known(self, addr):
-        if addr not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20, 21, 30):
+        if addr not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 20, 21, 30):
             raise ModbusTimeout(f"geen antwoord van adres {addr}")
+
+    # ---------------------------------------------------------------- discovery
+    def read_device_id(self, addr):
+        self._known(addr)
+        if addr == 15:
+            return {"vendor": "Gruner AG", "product": "327 VAV", "revision": "V1.16",
+                    "vendor_url": None, "product_name": "Gruner VAV controller",
+                    "model": "327 VAV", "app_name": None, "objects": 3}
+        raise ModbusException(1)
+
+    def report_server_id(self, addr):
+        self._known(addr)
+        if addr == 16:
+            return "TESTDEV 1234"
+        raise ModbusException(1)
 
     def _tick(self, base, amp, period):
         return int(base + amp * (0.5 + 0.5 * math.sin((time.time() - self.t0) / period)))

@@ -191,6 +191,104 @@ class Bus:
         self._note(addr, 0x04, start, qty, t0)
         return list(struct.unpack(">" + "H" * qty, data))
 
+    # ------------------------------------------------------------------ discovery
+    def _read_exact(self, n: int) -> bytes:
+        buf = b""
+        while len(buf) < n:
+            chunk = self.serial.read(n - len(buf))
+            if not chunk:
+                break
+            buf += chunk
+        return buf
+
+    def _raw(self, addr: int, pdu: bytes) -> bytes:
+        """Stuur een PDU en geef het volledige antwoordframe terug (incl. adres+CRC).
+
+        Nodig voor de discovery-functies (0x2B/0x0E en 0x11): die hebben een
+        variabele lengte en passen dus niet in _xfer() met een vaste read_len.
+        """
+        if not self.is_open():
+            raise BusDown("seriële poort niet open")
+        req = bytes([addr & 0xFF]) + pdu
+        req += struct.pack("<H", crc16(req))
+        try:
+            self.serial.reset_input_buffer()
+            self.serial.write(req)
+            self.serial.flush()
+        except (serial.SerialException, OSError) as exc:
+            raise BusDown(f"schrijffout op {self.port}: {exc}") from exc
+
+        head = self._read_exact(2)
+        if len(head) < 2:
+            raise ModbusTimeout(f"geen antwoord van adres {addr}")
+        if head[0] != addr:
+            raise ModbusError(f"onverwacht slave-adres {head[0]} (verwacht {addr})")
+        if head[1] & 0x80:
+            tail = self._read_exact(3)
+            if len(tail) < 3:
+                raise ModbusTimeout("afgekapt exception-antwoord")
+            raise ModbusException(tail[0])
+        return head
+
+    def read_device_id(self, addr: int) -> dict:
+        """FC 0x2B / MEI 0x0E — vraag het toestel wie het is.
+
+        Dit is de enige *echte* discovery op Modbus: je krijgt vendor, product-
+        code, revisie en (bij uitgebreide toestellen) modelnaam terug zonder de
+        registermap te kennen. Antwoordt een toestel hier niet op, dan zegt dat
+        niets over zijn bestaan — veel oudere slaves laten 0x2B gewoon vallen
+        met exception 01.
+        """
+        head = self._raw(addr, bytes([0x2B, 0x0E, 0x01, 0x00]))
+        if head[1] != 0x2B:
+            raise ModbusError(f"onverwachte functiecode {head[1]} (verwacht 0x2B)")
+        fixed = self._read_exact(6)          # MEI | code | conformity | more | next | nobj
+        if len(fixed) < 6:
+            raise ModbusTimeout("onvolledig device-id antwoord")
+        n_obj = fixed[5]
+        buf = head + fixed
+        idx = 8
+        objects: dict[int, str] = {}
+        for _ in range(n_obj):
+            need = self._read_exact(max(0, idx + 2 - len(buf)))
+            buf += need
+            if len(buf) < idx + 2:
+                raise ModbusTimeout("onvolledig device-id object")
+            oid, ln = buf[idx], buf[idx + 1]
+            idx += 2
+            buf += self._read_exact(max(0, idx + ln - len(buf)))
+            objects[oid] = buf[idx:idx + ln].decode("ascii", "replace").strip("\x00 ")
+            idx += ln
+        buf += self._read_exact(max(0, idx + 2 - len(buf)))
+        if len(buf) < idx + 2 or struct.unpack("<H", buf[idx:idx + 2])[0] != crc16(buf[:idx]):
+            raise ModbusError("CRC-fout in device-id antwoord")
+        return {
+            "vendor": objects.get(0x00) or None,
+            "product": objects.get(0x01) or None,
+            "revision": objects.get(0x02) or None,
+            "vendor_url": objects.get(0x03) or None,
+            "product_name": objects.get(0x04) or None,
+            "model": objects.get(0x05) or None,
+            "app_name": objects.get(0x06) or None,
+            "objects": len(objects),
+        }
+
+    def report_server_id(self, addr: int) -> str:
+        """FC 0x11 — oudere slaves (seriële lijn) geven hier hun ID-string."""
+        head = self._raw(addr, bytes([0x11]))
+        if head[1] != 0x11:
+            raise ModbusError(f"onverwachte functiecode {head[1]} (verwacht 0x11)")
+        n = self._read_exact(1)
+        if not n:
+            raise ModbusTimeout("onvolledig server-id antwoord")
+        body = self._read_exact(n[0] + 2)
+        if len(body) < n[0] + 2:
+            raise ModbusTimeout("onvolledig server-id antwoord")
+        frame = head + n + body
+        if struct.unpack("<H", frame[-2:])[0] != crc16(frame[:-2]):
+            raise ModbusError("CRC-fout in server-id antwoord")
+        return body[:-2].decode("ascii", "replace").strip("\x00 ")
+
     # ------------------------------------------------------------------ writes
     def write_coil(self, addr: int, coil: int, value: bool) -> None:
         val = 0xFF00 if value else 0x0000

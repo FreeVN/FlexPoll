@@ -37,6 +37,32 @@ waarden plausibel zijn. 90 % of meer = gerust toevoegen; 60 % = het toestel
 antwoordt, maar het type is een gok — controleer het adres in de documentatie van
 het toestel.
 
+### Onbekende deelnemers
+
+Modbus heeft geen discovery-protocol zoals BACnet (Who-Is). De bus is ook niet te
+"scannen" op de manier waarop je een IP-netwerk scant: een slave zwijgt tot hij
+iets gevraagd wordt. De tool doet daarom drie dingen per adres:
+
+1. **Liveness** — een leesactie op een register. Zowel data als een
+   *exception*-antwoord (bv. "illegaal data-adres") bewijst dat er een deelnemer
+   zit; alleen een timeout betekent "niemand thuis". Dit werkt zonder enige
+   kennis van de registermap.
+2. **Device Identification (FC 0x2B / MEI 0x0E)** — de enige echte "wie ben jij"
+   op Modbus: vendor, productcode, revisie en bij uitgebreide toestellen
+   product-/modelnaam. Ondersteunt het toestel die functie niet, dan krijg je
+   exception 01 — dat zegt niets over zijn bestaan, alleen over zijn leeftijd.
+   Als terugval probeert de tool FC 0x11 (Report Server ID).
+3. **Vingerafdruk** — pas daarna worden de bekende registerblokken vergeleken.
+
+Past een deelnemer op geen enkel bekend profiel, dan verschijnt hij als
+**Onbekende Modbus-deelnemer** met de badge *ontdekt*. Je kan hem meteen
+toevoegen: je krijgt een **algemene deelnemer** waarop je zelf de registers mapt.
+
+Wat de tool **niet** doet: broadcast naar adres 0 sturen (geen enkele slave
+antwoordt daarop, en de stille toestellen storen alleen maar), en gokken op een
+type als de vingerafdruk dubbelzinnig is — dan staat er een lagere score en de
+reden in de tooltip.
+
 ## Een module lezen
 
 Elke modulekaart toont:

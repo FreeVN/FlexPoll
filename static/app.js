@@ -131,7 +131,7 @@
   // ------------------------------------------------------------------ palette
   function renderPalette() {
     const host = $("#palette-tiles");
-    const ORDER = ["Siemens", "Belimo", "Pompen", "Warmtepomp"];
+    const ORDER = ["Siemens", "Belimo", "Gruner", "Pompen", "Warmtepomp"];
     const groups = new Map();
     for (const [key, t] of Object.entries(TYPES)) {
       if (!tabAllows(key, t)) continue;
@@ -515,6 +515,49 @@
             <span class="vmid" data-role="vmid">geparametreerd</span>
             <span class="muted" data-role="vmidnote">enkel via ZTH EU / PC-Tool</span>
           </div>`;
+
+      case "gruner_vav": {
+        const t = TYPES[m.type] || {};
+        const ov = t.overrides || {};
+        const bf = t.busfail || {};
+        const cmd = t.commands || {};
+        return `
+          <div class="chips">
+            <span class="chip" data-role="ovchip">—</span>
+            <span class="chip" data-role="statuschip">—</span>
+            <span class="chip" data-role="fwchip">—</span>
+          </div>
+          <div class="bigval"><span class="n" data-role="flow">—</span><span class="u" data-role="flowunit">m³/h</span></div>
+          <div class="subval" data-role="flowsub">—</div>
+          <div class="bar"><i data-role="posbar" style="width:0%"></i></div>
+          <div class="ctrl-row" style="margin-top:10px">
+            <label>Override</label>
+            <select data-role="override">${Object.entries(ov).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select>
+          </div>
+          <div class="ctrl-row">
+            <label>Setpunt</label>
+            <input type="number" min="0" max="100" step="0.5" data-role="setpoint" placeholder="%"
+                   title="0 % = Vmin, 100 % = Vmax (register 0, enkel bij setpuntbron 1 of 2).">
+            <button class="btn small primary" type="button" data-act="setsp">Zet</button>
+          </div>
+          <div class="sp-hint" data-role="sphint">—</div>
+          <div class="limrow">
+            <label>Vmin</label><input type="number" min="0" step="1" class="wide" data-role="gvmin">
+            <span data-role="gunit">m³/h</span>
+            <label>Vmax</label><input type="number" min="0" step="1" class="wide" data-role="gvmax">
+            <span data-role="gunit2">m³/h</span>
+            <button class="btn tiny primary" type="button" data-act="setglim">Zet</button>
+          </div>
+          <div class="ctrl-row">
+            <label>Bus-fail</label>
+            <select data-role="busfail">${Object.entries(bf).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select>
+          </div>
+          <div class="ctrl-row">
+            <label>Commando</label>
+            <select data-role="gcmd">${Object.entries(cmd).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select>
+            <button class="btn tiny" type="button" data-act="gcmdsend">Stuur</button>
+          </div>`;
+      }
 
       case "wilo_stratos":
         return `
@@ -1024,6 +1067,56 @@
         renderSpHint(card, v);
         const vm = card.querySelector('[data-role="vmid"]');
         if (vm) vm.textContent = v.vmid || "geparametreerd";
+      }
+
+      if (m.type === "gruner_vav") {
+        const unit = v.unit_txt || "";
+        setText(card, "flow", num(v.flow, 0));
+        const fu = card.querySelector('[data-role="flowunit"]');
+        if (fu) fu.textContent = unit;
+        setText(card, "flowsub", `klep ${num(v.position, 0)} % · ${num(v.angle, 1)}° · ${num(v.flow_rel, 0)} % van Vnom`);
+        const bar = card.querySelector('[data-role="posbar"]');
+        if (bar) bar.style.width = `${Math.max(0, Math.min(100, v.position || 0))}%`;
+        const ov = card.querySelector('[data-role="ovchip"]');
+        if (ov) {
+          ov.textContent = v.override_txt || "Auto";
+          ov.className = "chip " + (v.override ? "blue" : "ok");
+        }
+        const sc = card.querySelector('[data-role="statuschip"]');
+        if (sc) {
+          const first = (v.status_txt || "").split(", ")[0];
+          sc.textContent = v.status == null ? "—" : (v.status === 0 ? "status ok" : (first || `status ${v.status}`));
+          sc.className = "chip " + (v.status === 0 ? "ok" : "err");
+          sc.title = v.status_txt || "";
+        }
+        const fc = card.querySelector('[data-role="fwchip"]');
+        if (fc) fc.textContent = v.firmware != null ? `SW ${v.firmware}` : "";
+        const sel = card.querySelector('[data-role="override"]');
+        if (sel && document.activeElement !== sel) sel.value = String(v.override);
+        const sp = card.querySelector('[data-role="setpoint"]');
+        if (sp && document.activeElement !== sp) sp.placeholder = `${num(v.setpoint, 1)} %`;
+        const hint = card.querySelector('[data-role="sphint"]');
+        if (hint) {
+          const pct = isNum(v.setpoint) ? v.setpoint : 0;
+          const abs = (isNum(v.vmin_abs) && isNum(v.vmax_abs))
+            ? v.vmin_abs + (pct / 100) * (v.vmax_abs - v.vmin_abs) : null;
+          hint.innerHTML = (v.sp_source === 0 || v.sp_source === 3)
+            ? `setpuntbron <b>analoog</b> (reg 122 = ${v.sp_source}) — reg 0 is dan read-only`
+            : `setpunt ${num(pct, 1)} % → <b>${abs != null ? num(abs, 0) : "—"}</b> ${esc(unit)}`
+              + (v.sp_source != null ? ` · ${esc(v.sp_source_txt || "")}` : "");
+        }
+        for (const [role, key] of [["gvmin", "vmin_abs"], ["gvmax", "vmax_abs"]]) {
+          const el = card.querySelector(`[data-role="${role}"]`);
+          if (el && document.activeElement !== el) el.value = isNum(v[key]) ? String(v[key]) : "";
+        }
+        for (const role of ["gunit", "gunit2"]) {
+          const el = card.querySelector(`[data-role="${role}"]`);
+          if (el) el.textContent = unit;
+        }
+        const bf = card.querySelector('[data-role="busfail"]');
+        if (bf && document.activeElement !== bf && v.bus_fail != null) bf.value = String(v.bus_fail);
+        const bfrow = bf && bf.closest(".ctrl-row");
+        if (bfrow && v.bus_fail_txt) bfrow.title = `nu: ${v.bus_fail_txt}`;
       }
 
       if (m.type === "grundfos") {
@@ -1926,6 +2019,25 @@
         }
         return;
       }
+      if (e.target.closest('[data-act="setglim"]')) {
+        const c = e.target.closest(".card");
+        const vmin = parseFloat(c.querySelector('[data-role="gvmin"]').value);
+        const vmax = parseFloat(c.querySelector('[data-role="gvmax"]').value);
+        if (!isFinite(vmin) || !isFinite(vmax)) { toast("Vul Vmin en Vmax in", "err"); return; }
+        if (vmin > vmax) { toast("Vmin mag niet groter zijn dan Vmax", "err"); return; }
+        doAction(id, "set_vminmax", { vmin, vmax });
+        return;
+      }
+      if (e.target.closest('[data-act="gcmdsend"]')) {
+        const c = e.target.closest(".card");
+        const val = Number(c.querySelector('[data-role="gcmd"]').value);
+        if (val === 0) { toast("Kies eerst een commando", "err"); return; }
+        const txt = (TYPES.gruner_vav?.commands || {})[val] || val;
+        if (confirm(`Commando "${txt}" naar adres ${mod.address} sturen?\n\nEen adaption/reference drive beweegt de klep.`)) {
+          doAction(id, "command", { value: val });
+        }
+        return;
+      }
       if (e.target.closest('[data-act="setvmax"]')) {
         const c = e.target.closest(".card");
         const seq1 = parseFloat(c.querySelector('[data-role="vmax1"]').value);
@@ -2014,6 +2126,10 @@
       if (role === "stype") {
         const ch = Number(e.target.closest(".uio").dataset.ch);
         doAction(id, "set_type", { ch, value: Number(e.target.value) });
+        return;
+      }
+      if (role === "busfail") {
+        doAction(id, "set_busfail", { value: Number(e.target.value) });
         return;
       }
       if (role === "override") {
@@ -2183,15 +2299,19 @@
     const bar = $("#scanbar");
     if (!found || !found.length) {
       bar.className = "scanbar show";
-      bar.innerHTML = `<span class="lbl">Scan ${from}–${to}</span><span class="scanhit">Geen modules gevonden — check bedrading, baudrate en pariteit.</span>`;
+      bar.innerHTML = `<span class="lbl">Scan ${from}–${to}</span><span class="scanhit">Geen enkele deelnemer antwoordde — check bedrading, baudrate en pariteit.</span>`;
       return;
     }
     bar.className = "scanbar show";
     bar.innerHTML = `<span class="lbl">Scan ${from}–${to} · gevonden</span>` + found.map((h) => {
       const conf = Number(h.confidence ?? 0);
       const cls = conf >= 90 ? "high" : conf >= 70 ? "mid" : "low";
+      const id = h.ident ? [h.ident.vendor, h.ident.product, h.ident.revision]
+        .filter(Boolean).join(" ") : "";
       return `
       <span class="scanhit"><b>${h.address}</b> ${esc(h.name)}
+        ${id ? `<span class="muted">· ${esc(id)}</span>` : ""}
+        ${h.type === "generic" ? '<span class="chip blue">ontdekt</span>' : ""}
         <span class="conf ${cls}" title="${esc(h.reason || "")}">${conf}%</span>
         <button data-addr="${h.address}" data-mtype="${h.type}">+ toevoegen</button>
       </span>`;

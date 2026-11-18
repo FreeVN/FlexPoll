@@ -1260,6 +1260,69 @@ class App:
                 pass
             return None
 
+        # --- Discovery: vraag het toestel eerst wie het is (FC 0x2B/MEI 0x0E).
+        # Dit is de enige echte identiteitsvraag op Modbus en kost één frame per
+        # adres dat überhaupt antwoordt. Antwoordt het niet, dan gaan we gewoon
+        # verder met de register-vingerafdruk hieronder.
+        ident = None
+        try:
+            ident = bus.read_device_id(addr)
+        except ModbusError:
+            ident = None
+        blob = ""
+        if ident:
+            blob = " ".join(str(ident.get(k) or "") for k in
+                            ("vendor", "product", "product_name", "model")).lower()
+
+        def _id_txt() -> str:
+            return " / ".join(str(ident.get(k)) for k in
+                              ("vendor", "product", "revision") if ident.get(k))
+
+        # Device-id heeft altijd voorrang: een toestel dat zichzelf bij naam
+        # noemt hoeft niet geraden te worden uit registers die toevallig passen.
+        if "gruner" in blob:
+            try:
+                sw = bus.read_holding(addr, 103, 1)[0]
+            except ModbusError:
+                sw = None
+            return self._hit(addr, "gruner_vav", confidence=99,
+                             reason=f"device-id: {_id_txt()}" + (f", SW {sw}" if sw else ""),
+                             ident=ident)
+        if "belimo" in blob:
+            try:
+                regs = bus.read_holding(addr, 0, 9)
+            except ModbusError:
+                regs = None
+            if regs is not None:
+                if regs[3] == 4:
+                    return self._hit(addr, "belimo_ev", confidence=99,
+                                     reason=f"device-id: {_id_txt()}", ident=ident)
+                if regs[3] == 5:
+                    return self._hit(addr, "belimo_epiv6", confidence=99,
+                                     reason=f"device-id: {_id_txt()}", ident=ident)
+                return self._hit(addr, "belimo", confidence=96,
+                                 reason=f"device-id: {_id_txt()}", ident=ident)
+
+        # 0) Gruner VAV zonder device-id. Drie registers samen zijn genoeg:
+        # reg 130 = het eigen adres (dat kan een ander niet verzinnen), reg 201 =
+        # de eenheid (0..6) en er is géén Vnom-register 110. Zo wordt hij niet
+        # verward met een Grundfos-pompstatus of met de Belimo VAV-Compact.
+        try:
+            gregs = bus.read_holding(addr, 0, 9)
+            own_addr = bus.read_holding(addr, 130, 1)[0]
+            unit_sel = bus.read_holding(addr, 201, 1)[0]
+            if own_addr == addr and unit_sel <= 6 and gregs[1] <= 8 and gregs[3] <= 6:
+                try:
+                    vnom = bus.read_holding(addr, 110, 1)[0]
+                except ModbusError:
+                    vnom = 0
+                if not vnom:
+                    return self._hit(addr, "gruner_vav", confidence=94,
+                                     reason=f"reg 130 = eigen adres, eenheid reg 201 = {unit_sel}, "
+                                            "geen Vnom-register", ident=ident)
+        except ModbusError:
+            pass
+
         # 1) Grundfos CIM 200 — pumpstatus 00201..00205 bestaat alleen daar
         for base in (100, 101):
             try:
@@ -1282,7 +1345,10 @@ class App:
         except ModbusError:
             pass
 
-        # 3) Belimo — actuator type (reg 3) bepaalt de variant
+        # 3) Belimo of Gruner VAV — beide hebben reg 0..8 met setpoint/override/
+        # positie, dus de vingerafdruk moet ze uit elkaar houden. Het eenheids-
+        # register 201 bestaat alleen bij Gruner; de Belimo VAV-Compact stopt op
+        # 4x0119. De device-id (indien aanwezig) heeft altijd voorrang.
         regs = None
         try:
             regs = bus.read_holding(addr, 0, 9)
@@ -1295,11 +1361,11 @@ class App:
                 qnom = 0
             if regs[3] in (1, 2, 3, 4, 5) or qnom:
                 if regs[3] == 4:
-                    return self._hit(addr, "belimo_ev", confidence=97, reason="actuatortype reg 3 = 4 (Energy Valve)")
+                    return self._hit(addr, "belimo_ev", confidence=97, reason="actuatortype reg 3 = 4 (Energy Valve)", ident=ident)
                 if regs[3] == 5:
-                    return self._hit(addr, "belimo_epiv6", confidence=97, reason="actuatortype reg 3 = 5 (6-weg EPIV)")
+                    return self._hit(addr, "belimo_epiv6", confidence=97, reason="actuatortype reg 3 = 5 (6-weg EPIV)", ident=ident)
                 return self._hit(addr, "belimo", confidence=62,
-                                 reason=f"actuatortype reg 3 = {regs[3]} — VAV of 2-weg EPIV, niet te onderscheiden")
+                                 reason=f"actuatortype reg 3 = {regs[3]} — VAV of 2-weg EPIV, niet te onderscheiden", ident=ident)
 
         # 4) LG UB40 — FC4-blok met watertemperaturen en druk
         try:
@@ -1307,6 +1373,17 @@ class App:
             if inp[1] in (0, 1, 2) and 0 < inp[13] < 200:
                 return self._hit(addr, "lg_ub40", confidence=93,
                                  reason="FC4-blok 30001–30014 + plausibele waterdruk")
+        except ModbusError:
+            pass
+
+        # 4b) Clivet WiSAN — mode 0..8 + Tws + DHW + statusblok 239
+        try:
+            ctl = bus.read_holding(addr, 0, 5)
+            bus.read_holding(addr, 239, 2)
+            if ctl[0] in (1, 2, 4, 8) and 5 <= ctl[1] <= 65 and 20 <= ctl[4] <= 60:
+                return self._hit(addr, "clivet", confidence=90,
+                                 reason="modus 0..8 + Tws 5–65 °C + DHW 20–60 °C + statusblok 239",
+                                 ident=ident)
         except ModbusError:
             pass
 
@@ -1324,23 +1401,48 @@ class App:
         try:
             bus.read_coils(addr, 0, 8)
             return self._hit(addr, "em18r", confidence=88,
-                             reason="coil-blok leesbaar naast FC3")
+                             reason="coil-blok leesbaar naast FC3", ident=ident)
         except ModbusError:
             pass
-        return None
+
+        # 7) Onbekende deelnemer: hij antwoordde, maar op geen enkel bekend
+        # registerblok. Dat is een geldige hit — precies wat een discovery moet
+        # tonen. De tegel wordt een algemene deelnemer zodat de technieker zelf
+        # z'n registers kan mappen.
+        label = None
+        detail = "antwoordt op FC3 (exception of data), maar registerbeeld onbekend"
+        if ident:
+            label = ident.get("product_name") or ident.get("model") or ident.get("product")
+            detail = "device-id: " + " / ".join(
+                str(ident.get(k)) for k in ("vendor", "product", "revision") if ident.get(k))
+        else:
+            try:
+                sid = bus.report_server_id(addr)
+                if sid:
+                    detail += f"; server-id: {sid[:40]}"
+            except ModbusError:
+                pass
+        return self._hit(addr, "generic", confidence=45, reason=detail,
+                         ident=ident, name=label or "Onbekende Modbus-deelnemer")
 
     def _hit(self, addr: int, mtype: str, base: int | None = None,
-             confidence: int = 80, reason: str = "") -> dict:
+             confidence: int = 80, reason: str = "",
+             ident: dict | None = None, name: str | None = None) -> dict:
         meta = TYPES[mtype]
         hit = {
             "address": addr,
             "type": mtype,
-            "name": meta["name"],
+            "name": name or meta["name"],
             "confidence": confidence,
             "reason": reason,
         }
         if base is not None:
             hit["base"] = base
+        if ident:
+            # Alleen de velden die de technieker iets zeggen; geen ruwe dump.
+            hit["ident"] = {k: v for k, v in ident.items()
+                            if v and k in ("vendor", "product", "revision",
+                                           "product_name", "model")}
         return hit
 
 

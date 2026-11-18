@@ -54,6 +54,25 @@ TYPES: dict[str, dict] = {
         "accent": "#2271b1",
         "baud_hint": "19200 8E1",
     },
+    "gruner_vav": {
+        "name": "Gruner VAV",
+        "brand": "Gruner",
+        "group": "Gruner",
+        "kind": "327 VAV / GUAC-DM3",
+        "sub": "volumeregelaar",
+        "desc": "debiet · stand · override",
+        "icon": "vav",
+        "accent": "#00843D",
+        "baud_hint": "19200 8E1",
+        # Register 1, volledige enumeratie uit de Gruner/Grada Modbus-handleiding.
+        "overrides": {0: "Auto", 1: "Open", 2: "Dicht", 3: "Vmin", 4: "Vmax",
+                      5: "Vbtw", 6: "Snel open", 7: "Snel dicht", 8: "Stop"},
+        "commands": {0: "—", 1: "Adaption drive", 2: "Test", 3: "Reference drive",
+                     4: "Controller reset", 5: "Reset zonder referentie"},
+        "busfail": {0: "Laatste setpunt", 1: "Dicht", 2: "Open", 3: "Vmin",
+                    4: "Vbtw", 5: "Vmax"},
+        "units": {0: "l/s", 1: "m³/h", 2: "Pa", 3: "WC", 4: "°", 5: "cfm"},
+    },
     "grundfos": {
         "name": "Grundfos CIM 200",
         "brand": "Grundfos",
@@ -268,6 +287,28 @@ WILO_BUS_CMD = {
 
 BELIMO_CONTROLMODES = {0: "Positiesturing", 1: "Debietsturing", 2: "Vermogenssturing"}
 
+# Gruner VAV (327 VAV / GUAC-DM3) — register 1, 104, 108, 122 en 201.
+# Let op: 9 override-standen (6/7/8 ontbreken bij de Belimo VAV-Compact) en de
+# eenheid van het absolute debiet zit in reg 201, niet in een Vnom-register.
+GRUNER_OVERRIDE = {0: "Auto", 1: "Open", 2: "Dicht", 3: "Vmin", 4: "Vmax",
+                   5: "Vbtw", 6: "Snel open", 7: "Snel dicht", 8: "Stop"}
+GRUNER_COMMANDS = {0: "—", 1: "Adaption drive", 2: "Test", 3: "Reference drive",
+                   4: "Controller reset", 5: "Reset zonder referentie"}
+GRUNER_BUSFAIL = {0: "Laatste setpunt", 1: "Dicht", 2: "Open", 3: "Vmin",
+                  4: "Vbtw", 5: "Vmax"}
+GRUNER_SP_SOURCE = {0: "Analoog in, analoog uit", 1: "Bus-setpunt, analoog uit",
+                    2: "Bus-setpunt, uit = reg 10", 3: "Analoog in, uit = reg 10"}
+GRUNER_UNITS = {0: "l/s", 1: "m³/h", 2: "Pa", 3: "WC", 4: "°", 5: "cfm"}
+# Statusregister 104 — alleen de bits die een technieker iets zeggen.
+GRUNER_STATUS_BITS = [
+    (0, "EEPROM-fout 1"), (1, "EEPROM-fout 2"),
+    (4, "positie buiten adapted bereik — adaption drive nodig"),
+    (5, "geblokkeerd tussen eindstops"), (6, "druk < 0,5 Pa — debiet onmeetbaar"),
+    (7, "motor draait"), (8, "test/referentie/adaption drive bezig"),
+    (9, "druk over meetbereik"), (11, "max. looptijd verlopen"),
+    (12, "eindstop A"), (13, "eindstop B"), (15, "regelaar in dead band"),
+]
+
 # ControlMode (reg 00102) — welke regelmethode de pomp volgt.
 GRUNDFOS_CONTROL_MODES = {
     0: "Constante snelheid",
@@ -433,6 +474,85 @@ def read_belimo(bus: Bus, mod: dict) -> dict:
             # enkel gebruikt door override 4 en bus-failstand 3 — daarom tonen we het
             # als 'geparametreerd', niet als meetwaarde.
             "vmid": "geparametreerd",
+        },
+    }
+
+
+def read_gruner(bus: Bus, mod: dict) -> dict:
+    """Gruner VAV (327 VAV / GUAC-DM3) — Modbus RTU, 19200 8E1.
+
+    Registerbeeld uit de Gruner/Grada Modbus-handleiding. Twee dingen zijn anders
+    dan bij de Belimo VAV-Compact:
+      * er is géén Vnom-register: het absolute debiet staat in reg 7, in de
+        eenheid van reg 201, en Vmin/Vmax absoluut in reg 120/121;
+      * reg 1 heeft 9 standen (0..8): 6 = snel open, 7 = snel dicht, 8 = stop.
+    Het setpunt (reg 0) is ook hier relatief: 0 % = Vmin, 100 % = Vmax.
+    """
+    addr = mod["address"]
+    regs = bus.read_holding(addr, 0, 9)          # 0..8
+    fw = st = None
+    try:
+        fw, st = bus.read_holding(addr, 103, 2)
+    except ModbusError:
+        pass
+    try:
+        vmin_pct, vmax_pct = bus.read_holding(addr, 105, 2)
+    except ModbusError:
+        vmin_pct = vmax_pct = None
+    try:
+        vmin_abs, vmax_abs, sp_source = bus.read_holding(addr, 120, 3)
+    except ModbusError:
+        vmin_abs = vmax_abs = sp_source = None
+    try:
+        bus_fail = bus.read_holding(addr, 108, 1)[0]
+    except ModbusError:
+        bus_fail = None
+    try:
+        unit_sel = bus.read_holding(addr, 201, 1)[0]
+    except ModbusError:
+        unit_sel = None
+
+    unit_txt = GRUNER_UNITS.get(unit_sel, "" if unit_sel is None else f"unit {unit_sel}")
+    setpoint = round(regs[0] / 100.0, 2)
+    vmin = None if vmin_pct is None else round(vmin_pct / 100.0, 2)
+    vmax = None if vmax_pct is None else round(vmax_pct / 100.0, 2)
+    sp_abs = None
+    if vmin_abs is not None and vmax_abs is not None:
+        sp_abs = round(vmin_abs + (setpoint / 100.0) * (vmax_abs - vmin_abs), 1)
+
+    status = []
+    if st is not None:
+        for bit, txt in GRUNER_STATUS_BITS:
+            if st >> bit & 1:
+                status.append(txt)
+
+    return {
+        "serial": None,
+        "values": {
+            "setpoint": setpoint,
+            "override": regs[1],
+            "override_txt": GRUNER_OVERRIDE.get(regs[1], f"code {regs[1]}"),
+            "command": regs[2],
+            "actuator_type": regs[3],
+            "position": round(regs[4] / 100.0, 2),
+            "angle": round(regs[5] / 100.0, 2),
+            "flow_rel": round(regs[6] / 100.0, 2),
+            "flow": regs[7],
+            "unit_txt": unit_txt,
+            "unit_sel": unit_sel,
+            "sensor_mv": regs[8],
+            "vmin": vmin,
+            "vmax": vmax,
+            "vmin_abs": vmin_abs,
+            "vmax_abs": vmax_abs,
+            "sp_abs": sp_abs,
+            "sp_source": sp_source,
+            "sp_source_txt": GRUNER_SP_SOURCE.get(sp_source, ""),
+            "bus_fail": bus_fail,
+            "bus_fail_txt": GRUNER_BUSFAIL.get(bus_fail, ""),
+            "status": st,
+            "status_txt": ", ".join(status),
+            "firmware": fw,
         },
     }
 
@@ -945,6 +1065,7 @@ READERS = {
     "em18d": read_em18d,
     "em18u": read_em18u,
     "belimo": read_belimo,
+    "gruner_vav": read_gruner,
     "grundfos": read_grundfos,
     "wilo_stratos": read_wilo,
     "lg_ub40": read_lg_ub40,
@@ -1182,6 +1303,55 @@ def perform(bus: Bus, mod: dict, op: str, data: dict) -> str:
                     pass
             return f"setpunt -> {pct:.1f} %"
         raise ActionError(f"actie '{op}' niet ondersteund voor {TYPES[mtype]['name']}")
+
+    if mtype == "gruner_vav":
+        if op == "set_override":
+            val = int(data.get("value", -1))
+            if val not in GRUNER_OVERRIDE:
+                raise ActionError("ongeldige override-stand (0..8)")
+            bus.write_register(addr, 1, val)
+            return f"override -> {GRUNER_OVERRIDE[val]}"
+        if op == "set_setpoint":
+            pct = float(data.get("value", -1))
+            if not 0 <= pct <= 100:
+                raise ActionError("setpunt moet tussen 0 en 100 % liggen")
+            # Reg 0 is read-only zolang de setpuntbron analoog is (122 = 0 of 3).
+            try:
+                source = bus.read_holding(addr, 122, 1)[0]
+            except ModbusError:
+                source = None
+            if source in (0, 3):
+                raise ActionError(
+                    f"toestel staat op analoge setpuntbron (reg 122 = {source}); "
+                    "zet die eerst op 1 of 2"
+                )
+            bus.write_register(addr, 0, int(round(pct * 100)))
+            try:
+                lo, hi = bus.read_holding(addr, 120, 2)
+                return f"setpunt -> {pct:.1f} % = {lo + pct / 100.0 * (hi - lo):.0f}"
+            except ModbusError:
+                return f"setpunt -> {pct:.1f} %"
+        if op == "set_vminmax":
+            lo = float(data.get("vmin", -1))
+            hi = float(data.get("vmax", -1))
+            if not (0 <= lo <= hi <= 65535):
+                raise ActionError("ongeldige Vmin/Vmax (absolute eenheid, reg 120/121)")
+            bus.write_register(addr, 120, int(round(lo)))
+            bus.write_register(addr, 121, int(round(hi)))
+            return f"Vmin/Vmax -> {lo:.0f} / {hi:.0f}"
+        if op == "set_busfail":
+            val = int(data.get("value", -1))
+            if val not in GRUNER_BUSFAIL:
+                raise ActionError("ongeldige bus-failstand (0..5)")
+            bus.write_register(addr, 108, val)
+            return f"bus-fail -> {GRUNER_BUSFAIL[val]}"
+        if op == "command":
+            val = int(data.get("value", -1))
+            if val not in GRUNER_COMMANDS:
+                raise ActionError("ongeldig commando (0..5)")
+            bus.write_register(addr, 2, val)
+            return f"commando -> {GRUNER_COMMANDS[val]}"
+        raise ActionError("actie '%s' niet ondersteund voor Gruner VAV" % op)
 
     if mtype == "wilo_stratos":
         if op == "set_onoff":

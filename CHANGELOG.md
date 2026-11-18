@@ -13,6 +13,33 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Added
+
+- **Gruner VAV-tegel (Modbus RTU).** Nieuwe moduletegel voor de Gruner 327 VAV /
+  GUAC-DM3 volumeregelaars: debiet (reg 7, in de eenheid van reg 201), klepstand,
+  relatieve flow, override (9 standen, inclusief snel open/snel dicht/stop),
+  bus-failstand, Vmin/Vmax absoluut (reg 120/121) en het commando-register
+  (adaption/reference drive). Het setpunt (reg 0) wordt zoals bij de Belimo tussen
+  Vmin en Vmax geschaald en is read-only zolang de setpuntbron analoog staat.
+  Registerbeeld uit de Gruner/Grada Modbus-handleiding; 19200 8E1.
+- **Discovery van onbekende Modbus RTU-deelnemers.** De adresscan vergelijkt niet
+  langer alleen met de gekende tegels: elk adres dat antwoordt (data óf een
+  exception) maar op geen enkel bekend registerblok past, verschijnt nu als
+  *Onbekende Modbus-deelnemer* met een `+ toevoegen`-knop naar een algemene tegel.
+  Eerst wordt FC 0x2B / MEI 0x0E (Read Device Identification) gevraagd — vendor,
+  product, revisie, model — met FC 0x11 (Report Server ID) als terugval. Die
+  device-id heeft voorrang boven de register-vingerafdruk, zodat een toestel dat
+  zichzelf bij naam noemt nooit geraden hoeft te worden. Op vraag van Bernard
+  (klant), die een niet-geconfigureerde deelnemer op de bus wilde kunnen vinden.
+- Clivet WiSAN wordt nu ook door de scan herkend (modus + Tws + DHW + statusblok).
+
+### Changed
+
+- De scan-vingerafdruk voor de Belimo VAV en de Gruner VAV is gescheiden: reg 130
+  (eigen adres) plus reg 201 (eenheid) en het ontbreken van een Vnom-register
+  identificeren de Gruner, zodat een sparse registerbeeld niet als Grundfos-pomp
+  wordt gelezen.
+
 ## [1.6.0] — 2026-11-07
 
 ### Added
