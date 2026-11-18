@@ -1087,10 +1087,14 @@ class App:
 
     # ------------------------------------------------------------------ actions
     def apply_config(self, payload: dict) -> dict:
-        # Een client die enkel modules/bus post (curl, oude UI) mag de BACnet-
-        # toestellenlijst niet wissen: die staat niet in zijn payload.
-        if "bacnet" not in payload:
-            payload = {**payload, "bacnet": self.config.get("bacnet") or {}}
+        # Een client die maar één blok post (curl, oude UI, een script) mag de
+        # rest niet wissen. Zonder deze aanvulling vervangt _normalize() elk
+        # ontbrekend blok door zijn default — en dan is bijvoorbeeld `port` leeg
+        # ("geen seriële poort gekozen") of de modulelijst weg. Wil je een blok
+        # leegmaken, stuur het dan expliciet (bv. "modules": []).
+        for blk in ("bus", "modules", "mstp", "bacnet"):
+            if blk not in payload and self.config.get(blk) is not None:
+                payload = {**payload, blk: self.config[blk]}
         new = self._normalize(payload)
         with self.lock:
             old_sig = self._desired_bus_signature()
