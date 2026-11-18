@@ -75,6 +75,23 @@ Elke modulekaart toont:
 Onderaan de kaart staat **Baud → auto**: laat de tool de framing per module
 opnieuw bepalen. **Reset** wist de telling.
 
+### Gruner VAV
+
+De tegel voor de **Gruner 327 VAV / GUAC-DM3** (standaard 19200 8E1) toont het
+gemeten debiet in de eenheid die het toestel zelf kiest (reg 201: l/s, m³/h, Pa,
+cfm …), de klepstand, de relatieve flow en de statusbits. Je kan override kiezen
+(9 standen, inclusief *snel open*, *snel dicht* en *stop*), een setpunt zetten,
+Vmin/Vmax in absolute eenheid schrijven (reg 120/121), de bus-failstand instellen
+en een commando sturen (adaption drive, referentie-rit, controller-reset).
+
+Twee dingen die anders zijn dan bij de Belimo VAV:
+
+- **Geen Vnom-register.** Het absolute debiet komt uit reg 7 en de grenzen uit
+  120/121; je hoeft dus niets om te rekenen. Het setpunt blijft wel een percentage
+  tussen Vmin en Vmax.
+- **Het setpunt is read-only zolang de setpuntbron analoog staat** (reg 122 = 0 of
+  3). De tegel zegt dat met zoveel woorden in plaats van een kale exception.
+
 ## Punten toevoegen
 
 Klik op **+** bij een module (of gebruik **Punt toevoegen** in het menu) en vul in:
