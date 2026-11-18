@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-11-18
+
 ### Added
 
 - **Metz MR-SI4-tegel (Modbus RTU).** S0-tellermodule met 4 pulsingangen, op
