@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-11-18
+
 ### Added
 
 - **Gruner VAV-tegel (Modbus RTU).** Nieuwe moduletegel voor de Gruner 327 VAV /
