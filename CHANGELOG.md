@@ -15,6 +15,13 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ### Fixed
 
+- **BACnet-timeouts zijn nu een eigen foutsoort.** `BacnetTimeout` onderscheidt
+  "geen antwoord" van een echte fout: de Who-Is-lus wacht opnieuw bij een
+  timeout, maar stopt meteen bij bijvoorbeeld een gesloten socket in plaats van
+  strak door te lussen tot het venster om is. De verrijking (naam/model) leest
+  van dezelfde poort als de Who-Is, zodat een test op een afwijkende poort geen
+  echte toestellen meer raakt.
+
 - **BACnet/IP-scan vond op een netwerk met twee toestellen maar één toestel per
   scan, en wisselde van scan tot scan.** Drie oorzaken: de Who-Is ging per scan
   één keer de deur uit, dus één verloren I-Am kostte dat toestel de hele ronde;

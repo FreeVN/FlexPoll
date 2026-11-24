@@ -86,11 +86,14 @@ class FakeDevice(threading.Thread):
     ``answer_after`` — op de hoeveelste Who-Is het antwoordt (1 = meteen).
     ``control``      — control-byte van de NPDU waarmee de I-Am toekomt:
                        0x00 gewoon, 0x20 met DNET-kop, 0x80 netwerklaag-bericht.
+    ``serve_properties`` — antwoordt ReadProperty voor object-name (77) en model
+                       (70). Nodig om te bewijzen dat de verrijking naar dezelfde
+                       poort gaat als de Who-Is.
     """
 
     def __init__(self, ip: str, device: int = DEVICE, vendor: int = VENDOR,
                  answer_after: int = 1, control: int = 0x00,
-                 port: int = TEST_PORT):
+                 port: int = TEST_PORT, serve_properties: bool = False):
         super().__init__(daemon=True)
         self.ip = ip
         self.device = device
@@ -98,6 +101,7 @@ class FakeDevice(threading.Thread):
         self.answer_after = answer_after
         self.control = control
         self.port = port
+        self.serve_properties = serve_properties
         self.whois_count = 0
         self.iam_count = 0
         self._stop = threading.Event()
@@ -153,9 +157,28 @@ class FakeDevice(threading.Thread):
                     self.iam_count += 1
                     self._reply(self._iam_npdu(), src)
             elif apdu and apdu[0] == 0x00:              # Confirmed-Request
-                # Verrijken (naam/model) hoeft hier niet te werken: een reject is
-                # een geldig, definitief antwoord en houdt de test snel.
-                self._reply(bytes([0x01, 0x00, 0x60, apdu[2], 0x09]), src)
+                if not self.serve_properties or len(apdu) < 10:
+                    # Verrijken hoeft hier niet te werken: een reject is een
+                    # geldig, definitief antwoord en houdt de test snel.
+                    self._reply(bytes([0x01, 0x00, 0x60, apdu[2], 0x09]), src)
+                    continue
+                inv, service = apdu[2], apdu[3]
+                if service != 0x0C:                     # alleen ReadProperty
+                    self._reply(bytes([0x01, 0x00, 0x60, inv, 0x09]), src)
+                    continue
+                tag, cls, ln, j = bacnet._read_tag(apdu, 4)
+                oid = int.from_bytes(apdu[j:j + ln], "big")
+                tag, cls, ln, j2 = bacnet._read_tag(apdu, j + ln)
+                prop = int.from_bytes(apdu[j2:j2 + ln], "big")
+                values = {77: f"Fake-{self.device}", 70: "FakeModel"}
+                if (oid >> 22) != 8 or (oid & 0x3FFFFF) != self.device or prop not in values:
+                    self._reply(bytes([0x01, 0x00, 0x60, inv, 0x09]), src)
+                    continue
+                body = bytes([0x30, inv, 0x0C]) \
+                    + bacnet._ctx(0, oid.to_bytes(4, "big")) \
+                    + bacnet._ctx(1, bytes([prop])) \
+                    + b"\x3e" + bacnet._app_str(values[prop]) + b"\x3f"
+                self._reply(bytes([0x01, 0x00]) + body, src)
 
     def stop(self) -> None:
         self._stop.set()
@@ -295,6 +318,42 @@ def test_no_reply_returns_empty_list() -> None:
 
 
 print("BACnet Who-Is zelftest")
+def test_enrichment_uses_same_port() -> None:
+    """Naam/model moet van dezelfde poort komen als de Who-Is, niet van 47808."""
+    dev = with_device("127.0.0.1", serve_properties=True)
+    c = client(47946)
+    try:
+        found = c.whois(timeout=1.0, subnets=[], unicast=["127.0.0.1"], port=TEST_PORT)
+    finally:
+        c.close()
+        dev.stop()
+    hits = by_device(found)
+    assert len(hits) == 1, f"device 4242 niet gevonden: {found}"
+    assert hits[0]["name"] == "Fake-4242", \
+        f"verrijking ging naar de verkeerde poort (naam {hits[0]['name']!r})"
+
+
+def test_non_timeout_error_stops_scan() -> None:
+    """Een echte fout (geen deadline) mag geen strakke lus tot het venster worden."""
+    c = client(47941)
+    calls = {"n": 0}
+
+    def boom(deadline):
+        calls["n"] += 1
+        raise bacnet.BacnetError("socket kapot")
+
+    c._recv = boom            # type: ignore[assignment]
+    start = time.time()
+    try:
+        found = c.whois(timeout=3.0, subnets=[], unicast=["127.0.0.1"], port=TEST_PORT)
+    finally:
+        c.close()
+    elapsed = time.time() - start
+    assert found == [], found
+    assert calls["n"] <= 2, f"_recv {calls['n']}× aangeroepen na een echte fout"
+    assert elapsed < 1.0, f"scan bleef {elapsed:.2f}s doorlussen na een echte fout"
+
+
 check("NPDU-offsets", test_npdu_offsets)
 check("Who-Is herhaald tot tweede ronde", test_retry_second_round)
 check("Dedupe: zelfde instance op twee IP's", test_dedupe_same_instance_two_ips)
@@ -302,6 +361,8 @@ check("Dedupe: herhaald antwoord", test_dedupe_repeated_answer)
 check("NPDU met DNET-kop ontleed", test_npdu_dnet_header_parsed)
 check("Netwerklaag-bericht (0x80) genegeerd", test_npdu_network_layer_message_ignored)
 check("Geen antwoord geeft lege lijst", test_no_reply_returns_empty_list)
+check("Verrijking op dezelfde poort", test_enrichment_uses_same_port)
+check("Echte fout stopt de scan", test_non_timeout_error_stops_scan)
 
 if FAILED:
     print(f"MISLUKT: {', '.join(FAILED)}")

@@ -90,6 +90,10 @@ class BacnetServerError(BacnetError):
     definitive = True
 
 
+class BacnetTimeout(BacnetError):
+    """Geen antwoord binnen de deadline — de enige fout waarbij opnieuw zenden zin heeft."""
+
+
 # --- named codes: een kale "toestel weigert" verbergt precies de informatie
 # --- die je nodig hebt (verkeerd property, read-only punt, verkeerde index).
 ERROR_CLASSES = {
@@ -615,11 +619,12 @@ class BacnetClient:
             pass
 
     # ---------------------------------------------------------------- transport
-    def _send(self, ip: str, apdu: bytes, control: int = 0x04) -> None:
+    def _send(self, ip: str, apdu: bytes, control: int = 0x04,
+              port: int = BACNET_PORT) -> None:
         npdu = bytes([0x01, control]) + apdu
         packet = bytes([0x81, 0x0A]) + struct.pack(">H", len(npdu) + 4) + npdu
         try:
-            self.sock.sendto(packet, (ip, BACNET_PORT))
+            self.sock.sendto(packet, (ip, port))
         except OSError as exc:
             raise BacnetError(f"versturen mislukt: {exc}") from None
 
@@ -637,12 +642,12 @@ class BacnetClient:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
-                raise BacnetError("timeout — geen antwoord")
+                raise BacnetTimeout("timeout — geen antwoord")
             self.sock.settimeout(remaining)
             try:
                 data, src = self.sock.recvfrom(4096)
             except socket.timeout:
-                raise BacnetError("timeout — geen antwoord") from None
+                raise BacnetTimeout("timeout — geen antwoord") from None
             if len(data) < 8 or data[0] != 0x81:
                 continue
             fn = data[1]
@@ -679,7 +684,7 @@ class BacnetClient:
             self.sock.setblocking(True)
 
     def _confirmed(self, ip: str, service: int, body: bytes, timeout: float | None = None,
-                   attempts: int = 3, what: str = ""):
+                   attempts: int = 3, what: str = "", port: int = BACNET_PORT):
         """Eén verzoek tegelijk; UDP kan een antwoord verliezen, dus we proberen het opnieuw.
 
         Alleen bij timeouts is opnieuw sturen zinvol: een error/reject/abort-PDU is een
@@ -696,7 +701,7 @@ class BacnetClient:
             # Stonden invoke en max-resp omgedraaid: dan leest het toestel ons invoke-id als
             # "grootste APDU die ik aankan" (soms 50 bytes) en weigert het een lang antwoord
             # met error-class communication / segmentation-not-supported i.p.v. te zenden.
-            self._send(ip, bytes([0x00, MAX_SEGS | MAX_APDU_RESP, inv, service]) + body)
+            self._send(ip, bytes([0x00, MAX_SEGS | MAX_APDU_RESP, inv, service]) + body, 0x04, port)
             try:
                 return self._await(ip, inv, timeout, what)
             except BacnetServerError:
@@ -812,15 +817,16 @@ class BacnetClient:
             return False
 
     # ---------------------------------------------------------------- services
-    def _device_entry(self, ip: str, dev: int, vendor: int = 0) -> dict:
+    def _device_entry(self, ip: str, dev: int, vendor: int = 0,
+                      port: int = BACNET_PORT) -> dict:
         entry = {"device": dev, "ip": ip, "vendor": vendor, "name": "", "model": ""}
         try:
-            name = self.read_property(ip, 8, dev, PROP_OBJECT_NAME, timeout=0.8)
+            name = self.read_property(ip, 8, dev, PROP_OBJECT_NAME, timeout=0.8, port=port)
             entry["name"] = str(name).replace("\x00", "").strip()
         except BacnetError:
             pass
         try:
-            model = self.read_property(ip, 8, dev, 70, timeout=0.8)
+            model = self.read_property(ip, 8, dev, 70, timeout=0.8, port=port)
             entry["model"] = str(model).replace("\x00", "").strip()
         except BacnetError:
             pass
@@ -919,8 +925,12 @@ class BacnetClient:
                 continue
             try:
                 apdu, src = self._recv(min(end, next_send))
-            except BacnetError:
+            except BacnetTimeout:
                 continue
+            except BacnetError:
+                # Geen deadline-fout (bv. een gesloten socket): stoppen, niet
+                # strak doorlussen tot de volgende ronde.
+                break
             if not apdu or apdu[0] != 0x10 or len(apdu) < 10 or apdu[1] != 0x00:
                 continue
             tag, cls, ln, i = _read_tag(apdu, 2)
@@ -949,19 +959,20 @@ class BacnetClient:
             found[key] = {"device": dev, "ip": src[0], "vendor": vendor,
                           "name": "", "model": ""}
         for (ip, dev), entry in found.items():
-            info = self._device_entry(ip, dev, entry["vendor"])
+            info = self._device_entry(ip, dev, entry["vendor"], port=port)
             entry["name"], entry["model"] = info["name"], info["model"]
         return sorted(found.values(), key=lambda d: (d["device"], d["ip"]))
 
     def read_property(self, ip: str, obj_type: int, instance: int, prop: int,
-                      index: int | None = None, timeout: float | None = None):
+                      index: int | None = None, timeout: float | None = None,
+                      port: int = BACNET_PORT):
         body = _ctx(0, _obj_id(obj_type, instance)) + _ctx(1, _uint_bytes(prop))
         if index is not None:
             body += _ctx(2, _uint_bytes(index))
         what = f"lezen {OBJ_ABBR.get(obj_type, obj_type)} {instance} · property {prop}"
         if index is not None:
             what += f"[{index}]"
-        rest = self._confirmed(ip, 0x0C, body, timeout, what=what)
+        rest = self._confirmed(ip, 0x0C, body, timeout, what=what, port=port)
         return parse_ack(rest)
 
     def write_property(self, ip: str, obj_type: int, instance: int, prop: int, value) -> None:
