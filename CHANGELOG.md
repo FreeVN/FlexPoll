@@ -13,6 +13,19 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **BACnet/IP-scan vond op een netwerk met twee toestellen maar één toestel per
+  scan, en wisselde van scan tot scan.** Drie oorzaken: de Who-Is ging per scan
+  één keer de deur uit, dus één verloren I-Am kostte dat toestel de hele ronde;
+  de resultaten werden gededupliceerd op device-instance alleen, waardoor twee
+  toestellen met hetzelfde nummer tot één kaart samenvielen; en I-Am's met een
+  DNET-header (het pad via een router of BBMD) werden in `_recv` weggegooid.
+  Nu wordt de Who-Is binnen hetzelfde timeout-venster herhaald, dedupliceert de
+  client op `(ip, device)` en worden de NPDU-koppen correct ontleed (0x20 =
+  DNET aanwezig, 0x80 = netwerklaag-bericht negeren). De scantijd blijft gelijk.
+  (Melding van de werf, op vraag van Free.)
+
 ## [1.8.1] — 2026-11-18
 
 ### Fixed

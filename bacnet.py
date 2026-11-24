@@ -560,6 +560,40 @@ def _state_rows(table: list[tuple[int, list[str]]]) -> list[str]:
     return lines
 
 
+# --------------------------------------------------------------------------- NPDU
+def _npdu_apdu_offset(npdu: bytes) -> int | None:
+    """Geef de offset van de APDU in een NPDU, of None als er geen APDU in zit.
+
+    De NPDU-kop is niet altijd twee bytes: het control-byte zegt welke adressen
+    volgen.
+
+    * 0x80 — netwerklaag-bericht (bv. routering): geen APDU, dus negeren.
+    * 0x20 — destination specifier: DNET (2) + DLEN (1) + DADR (DLEN) + hopcount (1).
+    * 0x08 — source specifier: SNET (2) + SLEN (1) + SADR (SLEN) + hopcount (1).
+
+    Een I-Am van een toestel achter een router of BBMD komt binnen met 0x20
+    (DNET 0x0000, DLEN 0, hopcount 255). Wie 0x20 als "netwerklaag" wegfiltert,
+    verliest precies die toestellen; wie 0x80 niet filtert, leest de bytes van
+    een netwerklaag-bericht als APDU. Beide kanten zitten hier op één plek, zodat
+    het ontvangstpad en de tests dezelfde offsetlogica gebruiken.
+    """
+    if len(npdu) < 2 or npdu[0] != 0x01:
+        return None
+    control = npdu[1]
+    if control & 0x80:
+        return None
+    i = 2
+    if control & 0x20:                      # DNET + DLEN + DADR + hopcount
+        if len(npdu) < i + 3:
+            return None
+        i += 3 + npdu[i + 2] + 1
+    if control & 0x08:                      # SNET + SLEN + SADR + hopcount
+        if len(npdu) < i + 3:
+            return None
+        i += 3 + npdu[i + 2] + 1
+    return i if i < len(npdu) else None
+
+
 # --------------------------------------------------------------------------- client
 class BacnetClient:
     def __init__(self, bind_ip: str = "0.0.0.0", port: int = BACNET_PORT, timeout: float = 2.0,
@@ -596,6 +630,9 @@ class BacnetClient:
         nog 6 bytes origineel adres tussen de BVLC-kop en de NPDU. Wie die offset
         negeert, leest het B/IP-adres als NPDU-versie en ziet elk antwoord als
         ongeldig — precies het symptoom \"BBMD werkt wel, FlexPoll vindt niets\".
+
+        De NPDU-kop zelf is evenmin vast: ``_npdu_apdu_offset`` slaat de
+        DNET/SNET-adressen over en negeert echte netwerklaag-berichten (0x80).
         """
         while True:
             remaining = deadline - time.time()
@@ -620,11 +657,10 @@ class BacnetClient:
                 if orig_ip not in ("0.0.0.0", ""):
                     src = (orig_ip, orig_port or BACNET_PORT)
             npdu = data[offset:]
-            if not npdu or npdu[0] != 0x01:
-                continue
-            if npdu[1] & 0x20:            # netwerklaag-bericht (bv. Who-Is)
-                continue
-            return npdu[2:], src
+            apdu_offset = _npdu_apdu_offset(npdu)
+            if apdu_offset is None:
+                continue                       # netwerklaag-bericht of kapotte NPDU
+            return npdu[apdu_offset:], src
 
     def _pace(self) -> None:
         """Kleine pauze tussen verzoeken; sommige toestellen/ stacks verzuren bij een salvo."""
@@ -817,8 +853,41 @@ class BacnetClient:
             pass
         return entry
 
+    def _whois_send(self, packet: bytes, npdu: bytes, targets: list[str],
+                    port: int = BACNET_PORT) -> None:
+        """Stuur één Who-Is-ronde naar alle targets (broadcast én unicast).
+
+        Aangemeld als Foreign Device? Dan moet de Who-Is ook *naar de BBMD* als
+        Forwarded-NPDU (BVLC 0x04). Een lokale broadcast komt daar nooit: de
+        BBMD luistert op zijn eigen subnet, niet op het onze.
+
+        ``port`` is de doelpoort van de Who-Is (standaard BACnet/IP 47808). Een
+        afwijkende poort bestaat zodat een test op een dode poort kan zenden en
+        geen toestel op de testbank de uitslag bepaalt.
+        """
+        for target in targets:
+            try:
+                self.sock.sendto(packet, (target, port))
+            except OSError:
+                pass
+        fd = self.fd
+        if fd and fd.get("local_ip") and fd["local_ip"] != "0.0.0.0":
+            orig = socket.inet_aton(fd["local_ip"]) \
+                + struct.pack(">H", self.sock.getsockname()[1])
+            forwarded = bytes([0x81, BVLC_FORWARDED_NPDU]) \
+                + struct.pack(">H", len(npdu) + 4 + 6) + orig + npdu
+            try:
+                self.sock.sendto(forwarded, (fd["ip"], fd["port"]))
+            except OSError:
+                pass
+
     def whois(self, timeout: float = 3.0, subnets: list[str] | None = None,
-              unicast: list[str] | None = None) -> list[dict]:
+              unicast: list[str] | None = None, port: int = BACNET_PORT) -> list[dict]:
+        """Zoek BACnet-toestellen met herhaalde Who-Is-ronden.
+
+        ``port`` is de doelpoort van de Who-Is (standaard 47808). Alleen bedoeld
+        voor tests op een aparte poort; laat hem weg voor echt netwerkverkeer.
+        """
         apdu = b"\x10\x08"
         npdu = bytes([0x01, 0x20, 0xFF, 0xFF, 0x00, 0xFF]) + apdu
         packet = bytes([0x81, 0x0B]) + struct.pack(">H", len(npdu) + 4) + npdu
@@ -833,31 +902,25 @@ class BacnetClient:
             u = (u or "").strip()
             if u and u not in targets:
                 targets.append(u)
-        for target in targets:
-            try:
-                self.sock.sendto(packet, (target, BACNET_PORT))
-            except OSError:
-                pass
-        # Aangemeld als Foreign Device? Dan moet de Who-Is ook *naar de BBMD*
-        # als Forwarded-NPDU (BVLC 0x04). Een lokale broadcast komt daar nooit:
-        # de BBMD luistert op zijn eigen subnet, niet op het onze.
-        fd = self.fd
-        if fd and fd.get("local_ip") and fd["local_ip"] != "0.0.0.0":
-            orig = socket.inet_aton(fd["local_ip"]) \
-                + struct.pack(">H", self.sock.getsockname()[1])
-            forwarded = bytes([0x81, BVLC_FORWARDED_NPDU]) \
-                + struct.pack(">H", len(npdu) + 4 + 6) + orig + npdu
-            try:
-                self.sock.sendto(forwarded, (fd["ip"], fd["port"]))
-            except OSError:
-                pass
-        found: dict[int, dict] = {}
+        self._whois_send(packet, npdu, targets, port)
+        found: dict[tuple[str, int], dict] = {}
         end = time.time() + timeout
+        # Eén Who-Is is één kans op verlies: UDP gooit stil weg, en een toestel
+        # dat net zijn eigen I-Am-cyclus draait antwoordt soms pas op de tweede
+        # vraag. Daarom herhalen we de Who-Is *binnen* hetzelfde venster: twee
+        # ronden vanaf 1 s (interval timeout/2). De totale scantijd blijft
+        # timeout — we wachten niet langer, we vragen het gewoon nog eens.
+        interval = timeout / 2.0 if timeout >= 1.0 else max(timeout, 0.01)
+        next_send = time.time() + interval
         while time.time() < end:
+            if time.time() >= next_send:
+                self._whois_send(packet, npdu, targets, port)
+                next_send = time.time() + interval
+                continue
             try:
-                apdu, src = self._recv(end)
+                apdu, src = self._recv(min(end, next_send))
             except BacnetError:
-                break
+                continue
             if not apdu or apdu[0] != 0x10 or len(apdu) < 10 or apdu[1] != 0x00:
                 continue
             tag, cls, ln, i = _read_tag(apdu, 2)
@@ -871,18 +934,24 @@ class BacnetClient:
                 vals.append(value)
             dev = oid & 0x3FFFFF
             vendor = vals[2] if len(vals) > 2 and isinstance(vals[2], int) else 0
-            if dev in found:
+            # Dedupe op (ip, device), niet op device-instance alleen: twee
+            # toestellen met hetzelfde nummer op een verschillend IP zijn twee
+            # toestellen (bv. twee identiek geconfigureerde VAV's). Herhaalde
+            # I-Am's van hetzelfde paar — we vragen het nu meermaals — voegen
+            # niets toe; de eerste waarneming wint.
+            key = (src[0], dev)
+            if key in found:
                 continue
             # Alleen verzamelen: het verrijken (naam/model) kost tot 1,6 s per
             # toestel en mag het ontvangstvenster niet opeten. Anders verlies je
             # precies de toestellen die als tweede antwoorden — bij een BBMD is
             # dat steevast het echte toestel na de BBMD zelf.
-            found[dev] = {"device": dev, "ip": src[0], "vendor": vendor,
+            found[key] = {"device": dev, "ip": src[0], "vendor": vendor,
                           "name": "", "model": ""}
-        for dev, entry in found.items():
-            info = self._device_entry(entry["ip"], dev, entry["vendor"])
+        for (ip, dev), entry in found.items():
+            info = self._device_entry(ip, dev, entry["vendor"])
             entry["name"], entry["model"] = info["name"], info["model"]
-        return sorted(found.values(), key=lambda d: d["device"])
+        return sorted(found.values(), key=lambda d: (d["device"], d["ip"]))
 
     def read_property(self, ip: str, obj_type: int, instance: int, prop: int,
                       index: int | None = None, timeout: float | None = None):
