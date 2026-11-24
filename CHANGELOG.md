@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.8.2] — 2026-11-24
+
 ### Fixed
 
 - **BACnet-timeouts zijn nu een eigen foutsoort.** `BacnetTimeout` onderscheidt
