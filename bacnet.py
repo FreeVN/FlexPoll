@@ -1220,6 +1220,11 @@ class BacnetClient:
             per_request = max(0.05, min(timeout or self.timeout,
                                         deadline - time.time() if deadline else 10**9))
             if not self.rpm_supported or rpm_key in self.rpm_unsupported:
+                # Losse leesacties: een toestel dat binnen milliseconden antwoordt
+                # hoeft geen 2 s te wachten voor elk verloren datagram. Op een
+                # matige lijn is dat het verschil tussen 43 en 330 punten binnen
+                # het budget. 1,0 s laat trage toestellen (4G/router) nog toe.
+                per_request = min(per_request, 1.0)
                 chunk = keys[idx:idx + RPM_BLOCK]
                 out.update(self._loose_points(ip, chunk, include_description,
                                               per_request, deadline, port))
