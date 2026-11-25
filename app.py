@@ -832,13 +832,35 @@ class App:
         self.add_log("info", f"Foreign Device aangemeld bij BBMD {ip}:{port} (TTL {ttl}s)")
         return res
 
-    def bn_points(self, ip: str, device: int, limit: int = 80) -> dict:
+    def bn_points(self, ip: str, device: int, limit: int = 0, offset: int = 0,
+                  budget: float = 90.0) -> dict:
+        """Punten van een toestel — standaard alles, of één pagina.
+
+        ``limit`` 0 (standaard) betekent alle objecten van het toestel; ``limit``
+        groter dan 0 snijdt op ``offset``. Het antwoord houdt ``{ip, device,
+        points}`` en meldt daarnaast ``total``, ``offset``, ``limit``,
+        ``complete``, ``partial`` en ``warning``: een korte lijst is nooit
+        stilzwijgend. ``budget`` (seconden) begrenst het leeswerk, zodat een dood
+        toestel een gemarkeerd deelresultaat geeft in plaats van te hangen.
+        """
         import bacnet
 
         client = self.bacnet_client()
-        objs = client.objects(ip, device)
+        budget = max(0.0, float(budget or 0.0))
+        deadline = time.time() + budget if budget else None
+        objs = client.objects(ip, device, deadline=deadline)
+        total = len(objs)
+        complete = client.last_objects_complete
+        warning = client.last_objects_warning
+        start = max(0, int(offset or 0))
+        page = max(0, int(limit or 0))
+        selected = objs[start:start + page] if page else objs[start:]
         rows = []
-        for o in objs[:limit]:
+        partial = False
+        for o in selected:
+            if deadline is not None and time.time() >= deadline:
+                partial = True
+                break
             row = {"type": o["type"], "inst": o["inst"], "abbr": o["abbr"],
                    "name": "", "value": None, "unit": "", "ok": False, "error": None}
             try:
@@ -867,7 +889,13 @@ class App:
                 except bacnet.BacnetError:
                     pass
             rows.append(row)
-        return {"ip": ip, "device": device, "points": rows}
+        if partial:
+            note = (f"tijdsbudget van {budget:.0f} s bereikt na {len(rows)} van "
+                    f"{len(selected)} punten")
+            warning = f"{warning} · {note}" if warning else note
+        return {"ip": ip, "device": device, "points": rows, "total": total,
+                "offset": start, "limit": page, "complete": complete,
+                "partial": partial, "warning": warning}
 
     def bn_write(self, ip: str, obj_type: int, instance: int, value):
         import bacnet
@@ -876,11 +904,18 @@ class App:
         client.write_property(ip, int(obj_type), int(instance), bacnet.PROP_PRESENT_VALUE, value)
         return client.read_property(ip, int(obj_type), int(instance), bacnet.PROP_PRESENT_VALUE)
 
-    def bn_ede(self, ip: str, device: int) -> list[dict]:
-        return self.bacnet_client().ede(ip, device)
+    def bn_ede(self, ip: str, device: int, budget: float = 900.0) -> list[dict]:
+        """Puntenlijst voor de CSV-export; alles, met een tijdsbudget."""
+        deadline = time.time() + budget if budget and budget > 0 else None
+        return self.bacnet_client().ede(ip, device, deadline=deadline)
 
-    def bn_ede_package(self, ip: str, device: int, project: str = "") -> dict:
-        return self.bacnet_client().ede_package(ip, device, project=project)
+    def bn_ede_package(self, ip: str, device: int, project: str = "",
+                       budget: float = 900.0) -> dict:
+        """EDE-zip inhoud; ``budget`` seconden (standaard ruim boven de 34 s die
+        een 330-puntstoestel op de bank nodig had) en nooit een half bestand."""
+        deadline = time.time() + budget if budget and budget > 0 else None
+        return self.bacnet_client().ede_package(ip, device, project=project,
+                                                deadline=deadline)
 
     # ------------------------------------------------------------------ BACnet MS/TP
     def mstp_client(self):
@@ -1613,10 +1648,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bacnet/ede.zip":
             q = parse_qs(urlparse(self.path).query)
             ip = (q.get("ip") or [""])[0]
-            dev = int((q.get("device") or ["0"])[0] or 0)
             project = (q.get("project") or [""])[0]
+            if not ip:
+                return self._error(400, "ip verplicht")
             try:
-                pack = self.app.bn_ede_package(ip, dev, project)
+                dev = _as_int((q.get("device") or ["0"])[0], 0)
+                budget = float((q.get("budget") or ["900"])[0] or 900)
+                # Geen half zip: de pakketbouw loopt vóór elke header, dus elke
+                # fout of budgetoverschrijding komt hier als JSON naar buiten.
+                pack = self.app.bn_ede_package(ip, dev, project, budget=budget)
             except Exception as exc:                       # noqa: BLE001
                 return self._error(502, f"BACnet: {exc}")
             import io
@@ -1638,9 +1678,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bacnet/ede":
             q = parse_qs(urlparse(self.path).query)
             ip = (q.get("ip") or [""])[0]
-            dev = int((q.get("device") or ["0"])[0] or 0)
             try:
-                rows = self.app.bn_ede(ip, dev)
+                dev = _as_int((q.get("device") or ["0"])[0], 0)
+                budget = float((q.get("budget") or ["900"])[0] or 900)
+                rows = self.app.bn_ede(ip, dev, budget=budget)
             except Exception as exc:                       # noqa: BLE001
                 return self._error(502, f"BACnet: {exc}")
             import csv
@@ -1717,8 +1758,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not ip:
                     return self._error(400, "ip verplicht")
                 try:
-                    return self._json(200, self.app.bn_points(ip, int(body.get("device") or 0),
-                                                              int(body.get("limit") or 80)))
+                    # limit weglaten of 0 = alle punten; >0 = één pagina op offset.
+                    return self._json(200, self.app.bn_points(
+                        ip, _as_int(body.get("device"), 0),
+                        limit=max(0, _as_int(body.get("limit"), 0)),
+                        offset=max(0, _as_int(body.get("offset"), 0)),
+                        budget=float(body.get("budget") or 90.0)))
                 except Exception as exc:                   # noqa: BLE001
                     return self._error(502, f"BACnet: {exc}")
             if path == "/api/bacnet/write":
