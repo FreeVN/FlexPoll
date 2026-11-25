@@ -922,8 +922,13 @@ class App:
                 row["ok"] = True
             elif detail.get("error"):
                 row["error"] = detail["error"]
-            else:
+            elif detail.get("value_read"):
                 row["ok"] = True
+            else:
+                # Geen waarde én geen fout: het budget viel voordat dit punt
+                # gelezen was. Niet als geslaagd rapporteren — een consument
+                # ziet anders een rij zonder waarde die tóch ok heet.
+                row["error"] = "tijdsbudget bereikt"
             unit = detail.get("unit")
             if isinstance(unit, (int, float)) and not isinstance(unit, bool):
                 name = bacnet.UNITS.get(int(unit), f"unit-{int(unit)}")
