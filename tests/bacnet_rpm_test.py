@@ -69,7 +69,9 @@ def check(name: str, fn) -> None:
 class FakeDevice(threading.Thread):
     """BACnet/IP-toestel met ``ai_count`` analog inputs en RPM-aan/uit.
 
-    ``rpm_mode``   "on" | "error" | "reject" | "abort" — wat 0x0E terugkrijgt.
+    ``rpm_mode``   "on" | "error" | "reject" | "abort" | "silent" | "too_long" —
+                   wat 0x0E terugkrijgt ("too_long": eerste RPM-verzoek krijgt
+                   segmentation-not-supported, daarna normaal).
     ``whole_mode`` "full" (hele object-list in één antwoord) of "short"
                    (eerste 100 ids, zoals een APDU-grens doet).
     ``drop_first_rpm``  laat het eerste RPM-verzoek volledig vallen (UDP-verlies).
@@ -231,6 +233,12 @@ class FakeDevice(threading.Thread):
         self.rpm_requests += 1
         if self.rpm_mode == "silent":
             return                          # niets terug: een dood toestel
+        if self.rpm_mode == "too_long":
+            # Eerste RPM-verzoek: antwoord past niet in één APDU (segmentation
+            # not supported, code 54). Een halveren van het blok moet helpen.
+            if self.rpm_requests == 1:
+                self._error(src, inv, 7, 54, service=bacnet.SERVICE_RPM)
+                return
         if self.rpm_mode == "error":
             self._error(src, inv, 5, 45, service=bacnet.SERVICE_RPM)   # services / optional
             return
@@ -349,6 +357,36 @@ def with_app(fn, **kwargs):
         dev.stop()
 
 
+def _http_app(a):
+    """Echte HTTP-server bovenop deze App: (httpd, basis-url).
+
+    AC-2/AC-6/AC-11 vragen de wandkloktijd om de *route*, niet om de
+    client-aanroep: json-parsing, handler en serialisatie horen in het bewijs.
+    """
+    import app as app_mod
+
+    app_mod.Handler.app = a
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), app_mod.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, f"http://127.0.0.1:{httpd.server_address[1]}"
+
+
+def _stop_http(httpd) -> None:
+    import app as app_mod
+
+    httpd.shutdown()
+    httpd.server_close()
+    app_mod.Handler.app = None                          # type: ignore[assignment]
+
+
+def _post_points(base: str, body: dict, timeout: float = 20) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        base + "/api/bacnet/points", data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return res.status, json.loads(res.read().decode("utf-8"))
+
+
 def all_keys():
     return [(8, DEVICE)] + [(0, i) for i in range(1, AI_COUNT + 1)]
 
@@ -382,30 +420,80 @@ def test_request_shape_and_split_replies() -> None:
 
 
 def test_speed_and_request_reduction() -> None:
-    """331 punten < 5 s en ≥90% minder verzoeken dan het losse pad."""
-    def rpm_run(dev, c):
-        began = time.monotonic()
-        objs = c.objects("127.0.0.1", DEVICE)
-        details = c.read_points("127.0.0.1", [(o["type"], o["inst"]) for o in objs])
-        elapsed = time.monotonic() - began
-        assert len(details) == OBJECTS, len(details)
-        assert all(details[k]["value_read"] for k in all_keys()[1:]), "niet alle waarden"
+    """331 punten via POST < 5 s en ≥90% minder verzoeken dan het losse pad."""
+    def rpm_run(dev, a):
+        httpd, base = _http_app(a)
+        try:
+            began = time.monotonic()
+            status, d = _post_points(base, {"ip": "127.0.0.1", "device": DEVICE})
+            elapsed = time.monotonic() - began
+        finally:
+            _stop_http(httpd)
+        assert status == 200, status
+        assert len(d["points"]) == OBJECTS, len(d["points"])
+        assert all(p["value"] is not None for p in d["points"][1:]), "niet alle waarden"
         return elapsed, dev.requests
 
-    rpm_time, rpm_requests = with_fake(rpm_run, whole_mode="full")
+    rpm_time, rpm_requests = with_app(rpm_run, whole_mode="full")
 
-    def loose_run(dev, c):
-        c.rpm_supported = False                     # referentie: oud los pad
-        objs = c.objects("127.0.0.1", DEVICE)
-        details = c.read_points("127.0.0.1", [(o["type"], o["inst"]) for o in objs])
-        assert len(details) == OBJECTS, len(details)
+    def loose_run(dev, a):
+        a.bacnet_client().rpm_supported = False         # referentie: oud los pad
+        httpd, base = _http_app(a)
+        try:
+            status, d = _post_points(base, {"ip": "127.0.0.1", "device": DEVICE})
+        finally:
+            _stop_http(httpd)
+        assert status == 200 and len(d["points"]) == OBJECTS, len(d["points"])
         return dev.requests
 
-    loose_requests = with_fake(loose_run, whole_mode="full")
+    loose_requests = with_app(loose_run, whole_mode="full")
     assert rpm_time <= 5.0, f"RPM-pad duurde {rpm_time:.2f} s"
     assert rpm_requests <= loose_requests * 0.1, \
         f"{rpm_requests} vs {loose_requests} verzoeken — reductie te klein"
     assert rpm_requests == 13, rpm_requests                # 2 inventaris + 11 blokken
+
+
+def test_split_on_too_long_response() -> None:
+    """Een te groot RPM-antwoord halveert het blok; daarna weer volle blokken."""
+    def run(dev, c):
+        objs = c.objects("127.0.0.1", DEVICE)
+        details = c.read_points("127.0.0.1", [(o["type"], o["inst"]) for o in objs])
+        assert len(details) == OBJECTS, len(details)
+        ai_keys = [k for k in all_keys() if k[0] == 0]
+        assert all(details[k]["value_read"] for k in ai_keys), "niet alle waarden"
+        sizes = [len(s) for s in dev.specs_seen]
+        assert sizes[0] == bacnet.RPM_BLOCK // 2, sizes[:3]
+        assert all(n == bacnet.RPM_BLOCK for n in sizes[1:-1]), sizes
+        assert sizes[-1] == OBJECTS - bacnet.RPM_BLOCK // 2 - len(sizes[1:-1]) * bacnet.RPM_BLOCK, sizes
+        assert dev.rpm_requests == 12, dev.rpm_requests    # 11 blokken + 1 afgekeurd
+    with_fake(run, rpm_mode="too_long")
+
+
+def test_rpm_support_is_per_device() -> None:
+    """Eén niet-RPM-toestel zet het snelle pad voor een ander IP niet uit."""
+    bad = start(rpm_mode="error")
+    good = start(ip="127.0.0.2")
+    os.environ["FLEXPOLL_BACNET_PORT"] = str(CLIENT_PORT)
+    a = _app()
+    try:
+        c = a.bacnet_client()
+        c.timeout, c.delay = 0.5, 0.0
+        first = a.bn_points("127.0.0.1", DEVICE)
+        assert len(first["points"]) == OBJECTS, len(first["points"])
+        assert all(p["ok"] for p in first["points"] if p["type"] == 0)
+        assert bad.rpm_requests == 1, bad.rpm_requests
+        assert ("127.0.0.1", bacnet.BACNET_PORT) in c.rpm_unsupported
+        second = a.bn_points("127.0.0.2", DEVICE)
+        assert len(second["points"]) == OBJECTS, len(second["points"])
+        assert all(p["ok"] for p in second["points"] if p["type"] == 0)
+        assert good.rpm_requests >= 10, good.rpm_requests
+        assert good.loose_reads <= 2, f"{good.loose_reads} losse leesacties"
+        assert ("127.0.0.2", bacnet.BACNET_PORT) not in c.rpm_unsupported
+    finally:
+        if a._bn is not None:
+            a._bn.close()
+        bad.stop()
+        good.stop()
 
 
 def test_fallback_error_pdu() -> None:
@@ -419,7 +507,7 @@ def test_fallback_error_pdu() -> None:
             [p for p in ai if not p["ok"]][:3]
         assert ai[0]["name"] == "AI 1" and ai[0]["value"] == 1.0, ai[0]
         assert ai[0]["unit"] == "°C", ai[0]
-        assert a._bn.rpm_supported is False
+        assert ("127.0.0.1", bacnet.BACNET_PORT) in a._bn.rpm_unsupported
         assert dev.rpm_requests == 1, dev.rpm_requests
 
     for mode in ("error", "reject", "abort"):
@@ -464,7 +552,8 @@ def test_reject_abort_not_retried() -> None:
         except bacnet.BacnetError as exc:                   # mag, maar liever niet
             raise AssertionError(f"onverwachte fout zonder terugval: {exc}") from None
         assert dev.rpm_requests == 1, dev.rpm_requests
-        assert c.rpm_supported is False
+        assert c.rpm_supported is True                     # geen clientbrede uitschakeling
+        assert ("127.0.0.1", bacnet.BACNET_PORT) in c.rpm_unsupported
         assert dev.loose_reads >= AI_COUNT, dev.loose_reads
 
     for mode in ("reject", "abort"):
@@ -507,6 +596,12 @@ def test_budget_expiry_partial() -> None:
         assert d["partial"] is True, d
         assert "tijdsbudget" in d["warning"], d["warning"]
         assert 0 < filled(d["points"]) < OBJECTS, filled(d["points"])
+        # B1: een punt zonder waarde is niet geslaagd. Het budget mag geen
+        # rijen met ok=True en value=None achterlaten.
+        for p in d["points"]:
+            if p["type"] in bacnet.PV_OBJECT_TYPES and p["value"] is None:
+                assert p["ok"] is False, p
+                assert p["error"] == "tijdsbudget bereikt", p
     with_app(run, delay=0.04)
 
 
@@ -564,16 +659,28 @@ def test_object_list_cache() -> None:
 
 
 def test_silent_device_bounded() -> None:
-    """Een stil toestel eindigt binnen het budget met een nette fout, niet hangen."""
+    """Een stil toestel eindigt binnen budget+2 s met een nette JSON-fout."""
     def run(dev, a):
+        httpd, base = _http_app(a)
         began = time.monotonic()
         try:
-            a.bn_points("127.0.0.1", DEVICE, budget=1.0)
-        except Exception as exc:                            # noqa: BLE001
-            assert isinstance(exc, bacnet.BacnetError), type(exc).__name__
-        else:
-            raise AssertionError("stil toestel gaf geen fout")
-        assert time.monotonic() - began <= 6.0, time.monotonic() - began
+            try:
+                status, _body = _post_points(
+                    base, {"ip": "127.0.0.1", "device": DEVICE, "budget": 1.0},
+                    timeout=20)
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+                ctype = exc.headers.get("Content-Type", "")
+                body = json.loads(exc.read().decode("utf-8"))
+            else:
+                raise AssertionError(f"stil toestel gaf HTTP {status} in plaats van 502")
+            elapsed = time.monotonic() - began
+        finally:
+            _stop_http(httpd)
+        assert status == 502, status
+        assert ctype.startswith("application/json"), ctype
+        assert body.get("error"), body
+        assert elapsed <= 1.0 + 2.0, f"{elapsed:.2f} s bij budget 1.0"
 
     with_app(run, rpm_mode="silent")
 
@@ -587,6 +694,8 @@ if __name__ == "__main__":
     try:
         check("RPM vraagt in blokken van ≤32", test_request_shape_and_split_replies)
         check("RPM is snel en vraagt ≥90% minder", test_speed_and_request_reduction)
+        check("te groot antwoord halveert het blok", test_split_on_too_long_response)
+        check("RPM-ondersteuning is per toestel", test_rpm_support_is_per_device)
         check("terugval bij error/reject/abort", test_fallback_error_pdu)
         check("één error-result raakt één punt", test_partial_error_result)
         check("weggevallen antwoord één keer herkanst", test_timeout_retry_once)
