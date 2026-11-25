@@ -1415,8 +1415,19 @@
   // ------------------------------------------------------------------ BACnet/IP
   const BN_WRITABLE = new Set([1, 2, 4, 5, 14, 19]);
   const BN_BINARY = new Set([3, 4, 8]);
+  // Paginagrootte voor de puntenlijst: één verzoek van 330+ punten duurde op de
+  // bank minuten, en de server kapte er stilzwijgend op 80 af. De lijst groeit nu
+  // per 100 aan; de teller toont het totaal van het toestel, niet wat geladen is.
+  const BN_PAGE = 100;
   let bnDevices = [];
   let bnCurrent = null;
+  let bnPointsAll = [];
+  let bnPointsTotal = 0;
+  let bnPointsComplete = true;
+  let bnPointsWarning = "";
+  // Generatie-token: wie tijdens het laden van toestel wisselt, mag geen pagina
+  // van het vorige toestel in de nieuwe lijst krijgen (late antwoorden negeren).
+  let bnGen = 0;
 
   function bnSaved() {
     return (state && state.bacnet && state.bacnet.devices) || [];
@@ -1586,6 +1597,12 @@
 
   async function bnLoadPoints(dev) {
     bnCurrent = dev;
+    bnGen += 1;
+    const gen = bnGen;
+    bnPointsAll = [];
+    bnPointsTotal = 0;
+    bnPointsComplete = true;
+    bnPointsWarning = "";
     $("#bn-detail").hidden = false;
     $("#bn-title").textContent = `Device ${dev.device} — ${dev.name || "(naamloos)"} · ${dev.ip}`;
     const project = dev.name || `Device${dev.device}`;
@@ -1593,17 +1610,63 @@
     bnEdeHref();
     $("#bn-points").innerHTML = `<div class="pempty">punten ophalen…</div>`;
     try {
-      const res = await api("/api/bacnet/points", { method: "POST", body: JSON.stringify({ ip: dev.ip, device: dev.device }) });
-      bnRenderPoints(res.points || []);
-      toast(`${(res.points || []).length} punten gelezen`, "ok");
+      await bnLoadPage(dev, 0, gen);
+      toast(`${bnPointsTotal} punten`, "ok");
     } catch (err) {
+      if (gen !== bnGen) return;
       $("#bn-points").innerHTML = `<div class="pempty">fout: ${esc(err.message)}</div>`;
+    }
+  }
+
+  // Eén pagina van BN_PAGE punten; offset 0 begint een nieuwe lijst.
+  async function bnLoadPage(dev, offset, gen) {
+    const res = await api("/api/bacnet/points", {
+      method: "POST",
+      body: JSON.stringify({ ip: dev.ip, device: dev.device, limit: BN_PAGE, offset }),
+    });
+    if (gen !== bnGen) return;              // toestel gewisseld: dit antwoord is van het vorige
+    const rows = res.points || [];
+    if (offset === 0) bnPointsAll = [];
+    bnPointsAll = bnPointsAll.concat(rows);
+    if (typeof res.total === "number" && (res.total > 0 || offset === 0)) {
+      bnPointsTotal = res.total;
+    } else {
+      bnPointsTotal = Math.max(bnPointsTotal, bnPointsAll.length);
+    }
+    if (res.complete === false) bnPointsComplete = false;
+    if (res.warning) bnPointsWarning = res.warning;
+    if (res.partial) {
+      bnPointsComplete = false;
+      bnPointsWarning = res.warning || "tijdsbudget bereikt — niet alle punten geladen";
+    }
+    bnRenderPoints(bnPointsAll);
+  }
+
+  async function bnLoadMore() {
+    if (!bnCurrent) return;
+    const gen = bnGen;
+    const btn = document.querySelector("#bn-points [data-bnmore]");
+    if (btn) { btn.disabled = true; btn.textContent = "laden…"; }
+    try {
+      await bnLoadPage(bnCurrent, bnPointsAll.length, gen);
+    } catch (err) {
+      if (gen !== bnGen) return;
+      toast("meer laden mislukt: " + err.message, "err");
+      if (btn) { btn.disabled = false; btn.textContent = "meer laden"; }
     }
   }
 
   function bnRenderPoints(points) {
     if (!points.length) { $("#bn-points").innerHTML = `<div class="pempty">geen objecten</div>`; return; }
-    $("#bn-points").innerHTML = `
+    const rest = Math.max(0, bnPointsTotal - points.length);
+    const tel = bnPointsTotal ? `${points.length} van ${bnPointsTotal} punten` : `${points.length} punten`;
+    const status = `<div style="grid-column:1/-1;font-size:10px;color:#9aa5b3;padding:4px 0 6px">${esc(tel)}</div>`;
+    const warn = bnPointsComplete ? ""
+      : `<div style="grid-column:1/-1;font-size:10px;color:#b45309;padding:0 0 6px">let op: ${esc(bnPointsWarning || "de lijst is niet compleet")}</div>`;
+    const more = rest > 0
+      ? `<div style="grid-column:1/-1;padding:8px 0"><button class="btn tiny" data-bnmore="1">meer laden (${rest})</button></div>`
+      : "";
+    $("#bn-points").innerHTML = status + warn + `
       <div class="bnh">Type</div><div class="bnh">Object</div><div class="bnh">Waarde</div><div class="bnh">Actie</div>` +
       points.map((p) => {
         const writable = BN_WRITABLE.has(p.type);
@@ -1623,7 +1686,7 @@
             <span class="bnv ${p.ok ? "" : "bad"}">${esc(bnValueText(p))}${p.unit ? " " + esc(p.unit) : ""}</span>
             <span class="bna">${actie}</span>
           </div>`;
-      }).join("");
+      }).join("") + more;
   }
 
   async function bnWrite(type, inst, value) {
@@ -2276,6 +2339,7 @@
     $("#bn-refresh").addEventListener("click", () => { if (bnCurrent) bnLoadPoints(bnCurrent); });
     $("#bn-project").addEventListener("input", bnEdeHref);
     $("#bn-points").addEventListener("click", (e) => {
+      if (e.target.closest("[data-bnmore]")) { bnLoadMore(); return; }
       const btn = e.target.closest("[data-bnw]");
       if (!btn) return;
       const type = Number(btn.dataset.t);
