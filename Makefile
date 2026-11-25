@@ -23,11 +23,12 @@ venv:
 
 check:
 	$(PY) -c "import ast,sys; [ast.parse(open(f,encoding='utf-8').read(),f) for f in sys.argv[1:]]" \
-		app.py devices.py modbus_rtu.py modbus_tcp.py bacnet.py sim.py modbus_tcp_slave.py tests/bacnet_slave.py tests/bacnet_points_test.py
+		app.py devices.py modbus_rtu.py modbus_tcp.py bacnet.py sim.py modbus_tcp_slave.py tests/bacnet_slave.py tests/bacnet_points_test.py tests/bacnet_rpm_test.py
 	node --check static/app.js
 	@$(PY) tests/mstp_selftest.py
 	@$(PY) tests/bacnet_routing_test.py
 	@$(PY) tests/bacnet_whois_test.py
+	@$(PY) tests/bacnet_rpm_test.py
 	@$(PY) tests/bacnet_points_test.py
 	@$(PY) -c "import bacnet as b; \
 	assert b._subnet_broadcast('192.168.20.219','24')=='192.168.20.255'; \
