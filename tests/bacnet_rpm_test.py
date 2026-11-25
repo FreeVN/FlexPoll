@@ -209,7 +209,9 @@ class FakeDevice(threading.Thread):
     @staticmethod
     def _parse_rpm(apdu: bytes):
         i = 4
-        if apdu[i] != 0x1E:
+        # listOfReadAccessSpecs is tag [0] in een RPM-request (0x0E). Een client
+        # die hier 0x1E stuurt, stuurt een ongeldig verzoek: niet accepteren.
+        if apdu[i] != 0x0E:
             raise ValueError("RPM-request zonder listOfReadAccessSpecs")
         i += 1
         specs = []
@@ -231,6 +233,11 @@ class FakeDevice(threading.Thread):
 
     def _serve_rpm(self, src, inv: int, apdu: bytes) -> None:
         self.rpm_requests += 1
+        if len(apdu) <= 4 or apdu[4] != 0x0E:
+            # Strenge dummy: de body moet met tag [0] openen. Een afwijkende
+            # encoding wordt geweigerd, niet stilletjes aanvaard.
+            self._send(src, bytes([0x01, 0x00, 0x60, inv, 0x09]))      # unrecognized-service
+            return
         if self.rpm_mode == "silent":
             return                          # niets terug: een dood toestel
         if self.rpm_mode == "too_long":
@@ -685,6 +692,16 @@ def test_silent_device_bounded() -> None:
     with_app(run, rpm_mode="silent")
 
 
+def test_rpm_encoding_is_standard() -> None:
+    """Gouden bytes: de RPM-request-body, onafhankelijk van de client.
+
+    listOfReadAccessSpecs is tag [0] (0x0E); per object volgt objectIdentifier
+    [0] en listOfPropertyReferences [1] (0x1E). Beide lijsten sluiten met 0x1F.
+    """
+    body = bacnet.encode_rpm([(8, 1234, [77])])
+    assert body.hex() == "0e0c020004d21e094d1f1f", body.hex()
+
+
 if __name__ == "__main__":
     import fcntl
 
@@ -693,6 +710,7 @@ if __name__ == "__main__":
     print("BACnet RPM zelftest (331 objecten)")
     try:
         check("RPM vraagt in blokken van ≤32", test_request_shape_and_split_replies)
+        check("RPM-encoding is standaardconform", test_rpm_encoding_is_standard)
         check("RPM is snel en vraagt ≥90% minder", test_speed_and_request_reduction)
         check("te groot antwoord halveert het blok", test_split_on_too_long_response)
         check("RPM-ondersteuning is per toestel", test_rpm_support_is_per_device)

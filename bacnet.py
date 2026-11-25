@@ -494,11 +494,11 @@ def encode_rpm(specs) -> bytes:
     """Body van een ReadPropertyMultiple-request.
 
     ``specs`` is een lijst ``(object_type, instance, [property, ...])``. De
-    structuur is ``listOfReadAccessSpecs [1]`` met per object een
+    structuur is ``listOfReadAccessSpecs [0]`` met per object een
     ``ReadAccessSpecification``: ``objectIdentifier [0]`` gevolgd door
     ``listOfPropertyReferences [1]``.
     """
-    body = b"\x1e"                                   # listOfReadAccessSpecs open
+    body = b"\x0e"                                   # listOfReadAccessSpecs [0] open
     for obj_type, instance, props in specs:
         body += _ctx(0, _obj_id(obj_type, instance))
         body += b"\x1e" + b"".join(_ctx(0, _uint_bytes(p)) for p in props) + b"\x1f"
