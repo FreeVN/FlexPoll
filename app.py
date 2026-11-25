@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import subprocess
@@ -123,6 +124,30 @@ DEFAULT_BACNET = {
     "ttl": 60,
     "devices": [],
 }
+
+# Tijdsbudgetten voor het BACnet-leespad. Nooit onbeperkt: een dood toestel mag
+# geen verzoek laten hangen. 0/negatief/onparseerbaar valt hierop terug.
+BACNET_POINTS_BUDGET = 120.0
+BACNET_EDE_BUDGET = 300.0
+# Een volledige object-list van 331 indexen opnieuw lezen voor pagina 2 is
+# verspilling; 60 s is kort genoeg om een configuratiewijziging te merken.
+BACNET_OBJECT_CACHE_TTL = 60.0
+
+
+def _bacnet_budget(value, default: float) -> float:
+    """Seconden uit een query/body; onzin of ≤ 0 betekent de standaard.
+
+    Vroeger schakelde budget=0 de begrenzing uit en werd een onparseerbare
+    waarde een 500. Een budget is een bovengrens, geen schakelaar.
+    """
+    try:
+        budget = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(budget) or budget <= 0:
+        return default
+    return budget
+
 
 BAUD_CHOICES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
 
@@ -832,65 +857,84 @@ class App:
         self.add_log("info", f"Foreign Device aangemeld bij BBMD {ip}:{port} (TTL {ttl}s)")
         return res
 
+    def _bacnet_objects(self, client, ip: str, device: int, deadline: float):
+        """Object-list van een toestel, 60 s gecachet per (ip, device).
+
+        Een pagina 2 hoeft geen 331 indexen opnieuw te lezen. Alleen een
+        complete lijst wordt bewaard: een half gelezen lijst cachen zou de
+        volgende pagina stilzwijgend verkorten. Geeft ``(objecten, uit_cache)``.
+        """
+        key = (str(ip), int(device or 0))
+        cache = getattr(self, "_bn_obj_cache", None)
+        if cache is None:
+            cache = {}
+            self._bn_obj_cache = cache
+        now_ts = time.time()
+        hit = cache.get(key)
+        if hit and now_ts - hit[0] < BACNET_OBJECT_CACHE_TTL:
+            return list(hit[1]), True
+        objs = client.objects(ip, device, deadline=deadline)
+        if client.last_objects_complete:
+            cache[key] = (now_ts, list(objs))
+            for stale in [k for k, (ts, _o) in cache.items()
+                          if now_ts - ts >= BACNET_OBJECT_CACHE_TTL]:
+                cache.pop(stale, None)
+        return objs, False
+
     def bn_points(self, ip: str, device: int, limit: int = 0, offset: int = 0,
-                  budget: float = 90.0) -> dict:
+                  budget: float | str | None = BACNET_POINTS_BUDGET) -> dict:
         """Punten van een toestel — standaard alles, of één pagina.
 
         ``limit`` 0 (standaard) betekent alle objecten van het toestel; ``limit``
-        groter dan 0 snijdt op ``offset``. Het antwoord houdt ``{ip, device,
-        points}`` en meldt daarnaast ``total``, ``offset``, ``limit``,
-        ``complete``, ``partial`` en ``warning``: een korte lijst is nooit
-        stilzwijgend. ``budget`` (seconden) begrenst het leeswerk, zodat een dood
-        toestel een gemarkeerd deelresultaat geeft in plaats van te hangen.
+        groter dan 0 snijdt op ``offset``. Naam/waarde/unit komen in blokken van
+        32 via ReadPropertyMultiple; een toestel dat dat weigert valt terug op
+        losse leesacties. Het antwoord houdt ``{ip, device, points}`` en meldt
+        daarnaast ``total``, ``offset``, ``limit``, ``complete``, ``partial`` en
+        ``warning``: een korte lijst is nooit stilzwijgend. ``budget``
+        (seconden) is altijd begrensd (standaard 120 s).
         """
         import bacnet
 
         client = self.bacnet_client()
-        budget = max(0.0, float(budget or 0.0))
-        deadline = time.time() + budget if budget else None
-        objs = client.objects(ip, device, deadline=deadline)
+        budget = _bacnet_budget(budget, BACNET_POINTS_BUDGET)
+        deadline = time.time() + budget
+        objs, from_cache = self._bacnet_objects(client, ip, device, deadline)
         total = len(objs)
-        complete = client.last_objects_complete
-        warning = client.last_objects_warning
+        complete = True if from_cache else client.last_objects_complete
+        warning = "" if from_cache else client.last_objects_warning
         start = max(0, int(offset or 0))
         page = max(0, int(limit or 0))
         selected = objs[start:start + page] if page else objs[start:]
+        details = client.read_points(
+            ip, [(o["type"], o["inst"]) for o in selected], deadline=deadline)
         rows = []
-        partial = False
         for o in selected:
-            if deadline is not None and time.time() >= deadline:
-                partial = True
-                break
+            detail = details.get((o["type"], o["inst"])) or {}
             row = {"type": o["type"], "inst": o["inst"], "abbr": o["abbr"],
-                   "name": "", "value": None, "unit": "", "ok": False, "error": None}
-            try:
-                name = client.read_property(ip, o["type"], o["inst"], bacnet.PROP_OBJECT_NAME) or ""
-                # Legacy-toestellen leveren de naam met een leidende NUL
-                row["name"] = str(name).replace("\x00", "").strip()
-            except bacnet.BacnetError:
-                pass
+                   "name": detail.get("name") or "", "value": None, "unit": "",
+                   "ok": False, "error": None}
+            if detail.get("value_read"):
+                value = detail.get("value")
+                row["value"] = round(value, 3) if isinstance(value, float) else value
             if o["type"] not in bacnet.PV_OBJECT_TYPES:
                 # device, file, group, trend-log, vendor-types: geen present-value.
                 # Een error opvragen zou hier een fout tonen die er geen is.
                 row["ok"] = True
+            elif detail.get("error"):
+                row["error"] = detail["error"]
             else:
-                try:
-                    value = client.read_property(ip, o["type"], o["inst"], bacnet.PROP_PRESENT_VALUE)
-                    row["value"] = round(value, 3) if isinstance(value, float) else value
-                    row["ok"] = True
-                except bacnet.BacnetError as exc:
-                    row["error"] = str(exc)
-            if o["type"] in (0, 1, 2):
-                try:
-                    unit = client.read_property(ip, o["type"], o["inst"], bacnet.PROP_UNITS)
-                    if isinstance(unit, (int, float)) and not isinstance(unit, bool):
-                        name = bacnet.UNITS.get(int(unit), f"unit-{int(unit)}")
-                        row["unit"] = bacnet.UNIT_SYMBOLS.get(name, name)
-                except bacnet.BacnetError:
-                    pass
+                row["ok"] = True
+            unit = detail.get("unit")
+            if isinstance(unit, (int, float)) and not isinstance(unit, bool):
+                name = bacnet.UNITS.get(int(unit), f"unit-{int(unit)}")
+                row["unit"] = bacnet.UNIT_SYMBOLS.get(name, name)
             rows.append(row)
+        partial = bool(getattr(client, "last_points_partial", False))
         if partial:
-            note = (f"tijdsbudget van {budget:.0f} s bereikt na {len(rows)} van "
+            read = sum(1 for o in selected
+                       if (details.get((o["type"], o["inst"])) or {}).get("value_read")
+                       or (details.get((o["type"], o["inst"])) or {}).get("name"))
+            note = (f"tijdsbudget van {budget:g} s bereikt na {read} van "
                     f"{len(selected)} punten")
             warning = f"{warning} · {note}" if warning else note
         return {"ip": ip, "device": device, "points": rows, "total": total,
@@ -902,18 +946,25 @@ class App:
 
         client = self.bacnet_client()
         client.write_property(ip, int(obj_type), int(instance), bacnet.PROP_PRESENT_VALUE, value)
+        # Onze eigen schrijfactie kan de object-list hebben veranderd: cache weg.
+        cache = getattr(self, "_bn_obj_cache", None)
+        if cache is not None:
+            cache.pop((str(ip), 0), None)
+            for key in [k for k in cache if k[0] == str(ip)]:
+                cache.pop(key, None)
         return client.read_property(ip, int(obj_type), int(instance), bacnet.PROP_PRESENT_VALUE)
 
-    def bn_ede(self, ip: str, device: int, budget: float = 900.0) -> list[dict]:
-        """Puntenlijst voor de CSV-export; alles, met een tijdsbudget."""
-        deadline = time.time() + budget if budget and budget > 0 else None
+    def bn_ede(self, ip: str, device: int,
+               budget: float | str | None = BACNET_EDE_BUDGET) -> list[dict]:
+        """Puntenlijst voor de CSV-export; alles, met een begrensd budget."""
+        deadline = time.time() + _bacnet_budget(budget, BACNET_EDE_BUDGET)
         return self.bacnet_client().ede(ip, device, deadline=deadline)
 
     def bn_ede_package(self, ip: str, device: int, project: str = "",
-                       budget: float = 900.0) -> dict:
-        """EDE-zip inhoud; ``budget`` seconden (standaard ruim boven de 34 s die
-        een 330-puntstoestel op de bank nodig had) en nooit een half bestand."""
-        deadline = time.time() + budget if budget and budget > 0 else None
+                       budget: float | str | None = BACNET_EDE_BUDGET) -> dict:
+        """EDE-zip inhoud; ``budget`` seconden (standaard 300, nooit onbeperkt)
+        en nooit een half bestand."""
+        deadline = time.time() + _bacnet_budget(budget, BACNET_EDE_BUDGET)
         return self.bacnet_client().ede_package(ip, device, project=project,
                                                 deadline=deadline)
 
@@ -1653,7 +1704,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, "ip verplicht")
             try:
                 dev = _as_int((q.get("device") or ["0"])[0], 0)
-                budget = float((q.get("budget") or ["900"])[0] or 900)
+                # Geen default hier: _bacnet_budget() kent de standaard (300 s)
+                # en vangt 0/negatief/rommel af.
+                budget = (q.get("budget") or [None])[0]
                 # Geen half zip: de pakketbouw loopt vóór elke header, dus elke
                 # fout of budgetoverschrijding komt hier als JSON naar buiten.
                 pack = self.app.bn_ede_package(ip, dev, project, budget=budget)
@@ -1680,7 +1733,7 @@ class Handler(BaseHTTPRequestHandler):
             ip = (q.get("ip") or [""])[0]
             try:
                 dev = _as_int((q.get("device") or ["0"])[0], 0)
-                budget = float((q.get("budget") or ["900"])[0] or 900)
+                budget = (q.get("budget") or [None])[0]
                 rows = self.app.bn_ede(ip, dev, budget=budget)
             except Exception as exc:                       # noqa: BLE001
                 return self._error(502, f"BACnet: {exc}")
@@ -1763,7 +1816,7 @@ class Handler(BaseHTTPRequestHandler):
                         ip, _as_int(body.get("device"), 0),
                         limit=max(0, _as_int(body.get("limit"), 0)),
                         offset=max(0, _as_int(body.get("offset"), 0)),
-                        budget=float(body.get("budget") or 90.0)))
+                        budget=body.get("budget")))
                 except Exception as exc:                   # noqa: BLE001
                     return self._error(502, f"BACnet: {exc}")
             if path == "/api/bacnet/write":
