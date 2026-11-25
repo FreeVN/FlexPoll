@@ -13,6 +13,8 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+## [1.8.3] — 2026-11-25
+
 ### Fixed
 
 - **BACnet-punten lezen ging met één verzoek per eigenschap.** Voor 330 punten
