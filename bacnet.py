@@ -714,9 +714,12 @@ class BacnetClient:
         self.last_objects_complete = True
         self.last_objects_warning = ""
         self.last_objects_missing: list[int] = []
-        # ReadPropertyMultiple: zodra een toestel 0x0E met error/reject/abort
-        # weigert, blijven we voor de rest van deze client losse leesacties doen.
-        self.rpm_supported = True
+        # ReadPropertyMultiple: ondersteuning is per toestel (ip, poort). Weigert
+        # één legacy-toestel 0x0E, dan blijven alleen dáár de losse leesacties —
+        # een clientbrede vlag zou het snelle pad voor de hele installatie
+        # uitschakelen zodra er één ouder toestel in de lijst staat.
+        self.rpm_supported = True              # globale schakelaar (tests/oud pad)
+        self.rpm_unsupported: set[tuple[str, int]] = set()
         # Zette de laatste read_points() het werk stil omdat de deadline viel?
         self.last_points_partial = False
 
@@ -1206,7 +1209,7 @@ class BacnetClient:
         self.last_points_partial = False
         keys = [(int(t), int(i)) for t, i in objects]
         out: dict = {}
-        block = RPM_BLOCK
+        rpm_key = (str(ip), int(port))
         idx = 0
         while idx < len(keys):
             if deadline is not None and time.time() >= deadline:
@@ -1216,43 +1219,64 @@ class BacnetClient:
                 break
             per_request = max(0.05, min(timeout or self.timeout,
                                         deadline - time.time() if deadline else 10**9))
-            if not self.rpm_supported:
-                chunk = keys[idx:idx + block]
+            if not self.rpm_supported or rpm_key in self.rpm_unsupported:
+                chunk = keys[idx:idx + RPM_BLOCK]
                 out.update(self._loose_points(ip, chunk, include_description,
                                               per_request, deadline, port))
                 idx += len(chunk)
                 continue
-            chunk = keys[idx:idx + block]
-            specs = []
-            for obj_type, inst in chunk:
-                props = [PROP_OBJECT_NAME]
-                if include_description:
-                    props.append(PROP_DESCRIPTION)
-                if obj_type in PV_OBJECT_TYPES:
-                    props.append(PROP_PRESENT_VALUE)
-                if obj_type in (0, 1, 2):
-                    props.append(PROP_UNITS)
-                specs.append((obj_type, inst, props))
-            try:
-                results = self.read_property_multiple(ip, specs, timeout=per_request,
-                                                      port=port)
-            except BacnetServerError as exc:
-                if self._rpm_split_error(exc) and len(chunk) > 1:
-                    block = max(1, len(chunk) // 2)      # halveer en probeer opnieuw
-                    continue
-                # Error/reject/abort: het toestel wil dit niet. Alle volgende
-                # blokken gaan los — correctheid boven snelheid.
-                self.rpm_supported = False
-                out.update(self._loose_points(ip, chunk, include_description,
-                                              per_request, deadline, port))
-                idx += len(chunk)
-                continue
-            except BacnetTimeout:
-                # Ook na de herkansing niets: lees dit blok los, zodat één
-                # verloren antwoord geen 32 punten kost.
-                out.update(self._loose_points(ip, chunk, include_description,
-                                              per_request, deadline, port))
-                idx += len(chunk)
+            # Blok van maximaal RPM_BLOCK; past het antwoord niet in één APDU,
+            # dan halveren we *dit* blok en proberen opnieuw. Het volgende blok
+            # begint weer op volle grootte: één te groot antwoord is geen reden
+            # om de rest van de lijst in kleine brokjes te lezen.
+            size = min(RPM_BLOCK, len(keys) - idx)
+            results = None
+            while True:
+                chunk = keys[idx:idx + size]
+                if deadline is not None and time.time() >= deadline:
+                    self.last_points_partial = True
+                    for key in keys[idx:]:
+                        out.setdefault(key, self._empty_point())
+                    break
+                per_request = max(0.05, min(
+                    timeout or self.timeout,
+                    deadline - time.time() if deadline else 10**9))
+                specs = []
+                for obj_type, inst in chunk:
+                    props = [PROP_OBJECT_NAME]
+                    if include_description:
+                        props.append(PROP_DESCRIPTION)
+                    if obj_type in PV_OBJECT_TYPES:
+                        props.append(PROP_PRESENT_VALUE)
+                    if obj_type in (0, 1, 2):
+                        props.append(PROP_UNITS)
+                    specs.append((obj_type, inst, props))
+                try:
+                    results = self.read_property_multiple(ip, specs,
+                                                          timeout=per_request, port=port)
+                    break
+                except BacnetServerError as exc:
+                    if self._rpm_split_error(exc) and size > 1:
+                        size = max(1, size // 2)       # halveer en probeer opnieuw
+                        continue
+                    # Error/reject/abort: dít toestel wil de service niet. Alleen
+                    # voor dit IP gaan de volgende blokken los — andere toestellen
+                    # houden het snelle pad.
+                    self.rpm_unsupported.add(rpm_key)
+                    out.update(self._loose_points(ip, chunk, include_description,
+                                                  per_request, deadline, port))
+                    idx += len(chunk)
+                    break
+                except BacnetTimeout:
+                    # Ook na de herkansing niets: lees dit blok los, zodat één
+                    # verloren antwoord geen 32 punten kost.
+                    out.update(self._loose_points(ip, chunk, include_description,
+                                                  per_request, deadline, port))
+                    idx += len(chunk)
+                    break
+            if results is None:
+                if self.last_points_partial:
+                    break
                 continue
             for key in chunk:
                 item = self._empty_point()
@@ -1495,9 +1519,11 @@ class BacnetClient:
         details = self.read_points(ip, pairs, include_description=True,
                                    deadline=deadline)
         if self.last_points_partial:
+            incomplete = sum(1 for d in details.values()
+                             if not d["value_read"] and not d["name"])
             raise BacnetError(
-                f"tijdsbudget bereikt tijdens EDE-export: {len(pairs)} van "
-                f"{len(objs)} objecten gevraagd, lijst onvolledig")
+                f"tijdsbudget bereikt tijdens EDE-export: {incomplete} van "
+                f"{len(objs)} objecten onvolledig")
         rows = []
         for obj in objs:
             if deadline is not None and time.time() >= deadline:
