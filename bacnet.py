@@ -611,6 +611,11 @@ class BacnetClient:
         self._inv = random.randint(0, 180)
         # Foreign Device-registratie: {"ip", "port", "ttl", "expires"} of None.
         self.fd: dict | None = None
+        # Uitkomst van de laatste objects()/ede_package(): een korte lijst is
+        # nooit stilzwijgend — de aanroeper kan zien dàt er iets ontbreekt en wat.
+        self.last_objects_complete = True
+        self.last_objects_warning = ""
+        self.last_objects_missing: list[int] = []
 
     def close(self) -> None:
         try:
@@ -706,6 +711,9 @@ class BacnetClient:
                 return self._await(ip, inv, timeout, what)
             except BacnetServerError:
                 raise
+            except BacnetTimeout as exc:
+                # Al een vol timeout-venster gewacht; meteen opnieuw zenden.
+                last = exc
             except BacnetError as exc:
                 last = exc
                 time.sleep(0.05)
@@ -965,14 +973,20 @@ class BacnetClient:
 
     def read_property(self, ip: str, obj_type: int, instance: int, prop: int,
                       index: int | None = None, timeout: float | None = None,
-                      port: int = BACNET_PORT):
+                      port: int = BACNET_PORT, attempts: int = 3):
+        """Lees één property; een verloren UDP-antwoord wordt ``attempts``× herkanst.
+
+        Opnieuw zenden gebeurt alleen bij een timeout. Een error/reject/abort is
+        een beslissing van het toestel en blijft dezelfde — die komt meteen terug.
+        """
         body = _ctx(0, _obj_id(obj_type, instance)) + _ctx(1, _uint_bytes(prop))
         if index is not None:
             body += _ctx(2, _uint_bytes(index))
         what = f"lezen {OBJ_ABBR.get(obj_type, obj_type)} {instance} · property {prop}"
         if index is not None:
             what += f"[{index}]"
-        rest = self._confirmed(ip, 0x0C, body, timeout, what=what, port=port)
+        rest = self._confirmed(ip, 0x0C, body, timeout, attempts=attempts,
+                               what=what, port=port)
         return parse_ack(rest)
 
     def write_property(self, ip: str, obj_type: int, instance: int, prop: int, value) -> None:
@@ -1000,48 +1014,94 @@ class BacnetClient:
             return int.from_bytes(oid, "big")
         return oid if isinstance(oid, int) else None
 
-    def _object_list(self, ip: str, device: int, count: int, timeout: float | None) -> list[int]:
-        """Lees de object-list in één verzoek; val terug op per-element als dat niet gaat.
+    def _object_list(self, ip: str, device: int, count: int, timeout: float | None,
+                     deadline: float | None = None) -> list[int]:
+        """Lees de object-list volledig; vul een tekort per index aan.
 
-        Eén keer de array lezen is niet enkel sneller: een toestel dat niet kan segmenteren
-        antwoordt soms helemaal niet op losse indexen, terwijl de volledige array (130 ids
-        ≈ 520 bytes) wél in één APDU past.
+        Eén keer de array lezen is sneller, maar het antwoord past niet altijd in
+        één APDU: een toestel met 330 objecten (≈1650 bytes) kan de array niet in
+        één keer sturen en antwoordt soms met een *te korte* array. De oude code
+        kapte daar af op ``count`` van wat er binnenkwam — stilzwijgend minder
+        objecten dan het toestel heeft. Nu is de array alleen een voorsprong: wat
+        ontbreekt wordt per index opgevraagd. Wat ook dan niet lukt, wordt
+        onthouden in ``last_objects_complete``/``last_objects_warning``.
         """
+        count = max(0, int(count or 0))
+        oids: list[int] = []
         try:
             whole = self.read_property(ip, 8, device, PROP_OBJECT_LIST, None, timeout)
             items = whole if isinstance(whole, list) else [whole]
-            oids = [self._as_oid(x) for x in items]
-            oids = [o for o in oids if o is not None]
-            if oids:
-                return oids[:count or len(oids)]
+            oids = [o for o in (self._as_oid(x) for x in items) if o is not None]
         except BacnetError:
-            pass
-        out = []
-        for i in range(1, min(count, 400) + 1):
-            try:
-                oid = self._as_oid(self.read_property(ip, 8, device, PROP_OBJECT_LIST, i, timeout))
-            except BacnetError:
-                break
-            if oid is None:
-                continue
-            out.append(oid)
-        return out
+            oids = []
+        if count and len(oids) >= count:
+            return oids[:count]
 
-    def objects(self, ip: str, device: int, timeout: float | None = None) -> list[dict]:
+        missing: list[int] = []
+        for i in range(len(oids) + 1, count + 1):
+            if deadline is not None and time.time() >= deadline:
+                missing.extend(range(i, count + 1))
+                break
+            try:
+                oid = self._as_oid(self.read_property(ip, 8, device, PROP_OBJECT_LIST,
+                                                      i, timeout))
+            except BacnetError:
+                # Niet afbreken: één onleesbare index betekent niet dat de
+                # volgende 200 er ook niet zijn.
+                missing.append(i)
+                continue
+            if oid is None:
+                missing.append(i)
+                continue
+            oids.append(oid)
+
+        self.last_objects_missing = missing
+        if missing:
+            self.last_objects_complete = False
+            shown = ", ".join(str(m) for m in missing[:8])
+            self.last_objects_warning = (
+                f"object-list onvolledig: {len(missing)} van {count} index(en) niet "
+                f"leesbaar ({shown}{' …' if len(missing) > 8 else ''}) — "
+                f"{len(oids)} objecten gelezen")
+        return oids
+
+    def objects(self, ip: str, device: int, timeout: float | None = None,
+                deadline: float | None = None) -> list[dict]:
+        """Alle objecten van een toestel.
+
+        ``last_objects_complete`` zegt of de lijst echt compleet is; een tekort
+        is nooit stil. ``deadline`` (epoch) begrenst het leeswerk: wat dan nog
+        niet binnen is, blijft als ontbrekend gemarkeerd.
+        """
+        self.last_objects_complete = True
+        self.last_objects_warning = ""
+        self.last_objects_missing = []
         count = self.read_property(ip, 8, device, PROP_OBJECT_LIST, 0, timeout)
         if not isinstance(count, int):
             raise BacnetError("object-list niet leesbaar")
         out = []
-        for oid in self._object_list(ip, device, count, timeout):
+        for oid in self._object_list(ip, device, count, timeout, deadline):
             t, inst = oid >> 22, oid & 0x3FFFFF
             out.append({"type": t, "inst": inst, "name": OBJ_TYPES.get(t, f"type-{t}"),
                         "abbr": OBJ_ABBR.get(t, str(t))})
         return out
 
     def ede_package(self, ip: str, device: int, project: str = "", author: str = "",
-                    max_points: int = 400) -> dict:
-        """Volledige EDE-export volgens B.I.G.-EU layout 2.3: vier CSV-bestanden."""
-        objs = self.objects(ip, device)[:max_points]
+                    max_points: int = 0, deadline: float | None = None) -> dict:
+        """Volledige EDE-export volgens B.I.G.-EU layout 2.3: vier CSV-bestanden.
+
+        ``max_points`` 0 (standaard) betekent álles; een plafond kapte vroeger
+        stilzwijgend af op 400. ``deadline`` (epoch) voorkomt dat een dood
+        toestel de aanvraag eindeloos laat hangen — liever een eerlijke fout dan
+        een half bestand.
+        """
+        objs = self.objects(ip, device, deadline=deadline)
+        if not self.last_objects_complete:
+            raise BacnetError(
+                "EDE-export geweigerd: " + (self.last_objects_warning or
+                                            "object-list onvolledig"))
+        if max_points and max_points > 0:
+            objs = objs[:max_points]
 
         try:
             dev_name = _ede_clean(self.read_property(ip, 8, device, PROP_OBJECT_NAME))
@@ -1055,6 +1115,10 @@ class BacnetClient:
         rows: list[str] = []
 
         for o in objs:
+            if deadline is not None and time.time() >= deadline:
+                raise BacnetError(
+                    f"tijdsbudget bereikt tijdens EDE-export: {len(rows)} van "
+                    f"{len(objs)} objecten verwerkt")
             t, inst = o["type"], o["inst"]
             name = ""
             desc = ""
@@ -1142,9 +1206,22 @@ class BacnetClient:
             "units": len(units_used),
         }
 
-    def ede(self, ip: str, device: int, max_points: int = 200) -> list[dict]:
+    def ede(self, ip: str, device: int, max_points: int = 0,
+            deadline: float | None = None) -> list[dict]:
+        """Puntenlijst voor de CSV-export; ``max_points`` 0 = alles."""
+        objs = self.objects(ip, device, deadline=deadline)
+        if not self.last_objects_complete:
+            raise BacnetError(
+                "EDE-export geweigerd: " + (self.last_objects_warning or
+                                            "object-list onvolledig"))
+        if max_points and max_points > 0:
+            objs = objs[:max_points]
         rows = []
-        for obj in self.objects(ip, device)[:max_points]:
+        for obj in objs:
+            if deadline is not None and time.time() >= deadline:
+                raise BacnetError(
+                    f"tijdsbudget bereikt tijdens EDE-export: {len(rows)} van "
+                    f"{len(objs)} objecten verwerkt")
             t, inst = obj["type"], obj["inst"]
             row = {"ObjectType": obj["abbr"], "ObjectInstance": inst,
                    "ObjectName": "", "Description": "", "PresentValue": "",
