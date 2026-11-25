@@ -15,6 +15,24 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ### Fixed
 
+- **BACnet-punten lezen ging met één verzoek per eigenschap.** Voor 330 punten
+  waren dat ~1000 UDP-verzoeken (naam, present-value en unit apart), waardoor de
+  leesronde tientallen seconden duurde en bij 10% pakketverlies slechts 13 van de
+  330 punten binnen het budget overbleven. Nu gaat naam, present-value en unit
+  (en voor de EDE-export ook description) in blokken van 32 objecten via
+  **ReadPropertyMultiple** (service 0x0E): 331 objecten in 11 verzoeken, gemeten
+  ruim onder de 5 s op loopback met ruim 90% minder UDP-verkeer. Weigert een
+  toestel RPM met een error-, reject- of abort-PDU, dan valt de client stil terug
+  op losse leesacties — dezelfde 331 rijen, alleen langzamer. Een error-result
+  voor één eigenschap maakt alleen dát punt `ok=false` met de fouttekst; er wordt
+  niet opnieuw geprobeerd. Een volledig weggevallen antwoord wordt één keer
+  herkanst, een te groot antwoord halveert het blok. De tijdsbudgetten zijn
+  begrensd en nooit onbeperkt (punten standaard 120 s, EDE 300 s; 0, negatief of
+  onparseerbaar valt daarop terug), een verstrijkend budget levert deelpunten met
+  `partial`/`warning` of een JSON-fout in plaats van een half zip-bestand. De
+  object-list wordt 60 s per (ip, device) gecachet, zodat pagina 2 niet opnieuw
+  331 indexen leest.
+
 - **BACnet-toestellen met meer dan 300 punten gaven er maar 80, en de
   EDE-export had soms kuren.** Drie oorzaken. Ten eerste stond er een harde
   limiet van 80 in `bn_points` en in de HTTP-handler (en 400/200 in de
