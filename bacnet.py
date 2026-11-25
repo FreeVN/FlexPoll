@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026 Free van Nieuwenhove
-"""Minimale BACnet/IP-client (Who-Is, ReadProperty, WriteProperty) — enkel stdlib.
+"""Minimale BACnet/IP-client (Who-Is, ReadProperty, ReadPropertyMultiple,
+WriteProperty) — enkel stdlib.
 
-Bewust beperkt: één toestel per keer, geen ReadPropertyMultiple. Genoeg om een
-toestel te vinden, punten te lezen/schrijven en een EDE-lijst te trekken.
+Bewust beperkt: één toestel per keer, geen COV/WritePropertyMultiple en geen
+segmentatie. Genoeg om een toestel te vinden, punten in blokken te lezen/schrijven
+en een EDE-lijst te trekken.
 
 Routing: een broadcast gaat niet door een router. Daarom twee uitwegen, allebei
 zonder dat wij zelf een BBMD worden:
@@ -79,6 +81,12 @@ PROP_DESCRIPTION = 28
 PROP_PRESENT_VALUE = 85
 PROP_UNITS = 117
 PROP_STATUS_FLAGS = 111
+
+# Confirmed-service ReadPropertyMultiple (0x0E). Eén verzoek per blok van 32
+# objecten vervangt 32 losse ReadProperty's; de APDU blijft binnen de 1476 bytes
+# die we aankondigen zolang het blok klein genoeg is.
+SERVICE_RPM = 0x0E
+RPM_BLOCK = 32
 
 
 class BacnetError(Exception):
@@ -482,6 +490,96 @@ def parse_ack(buf: bytes):
     return values[0] if len(values) == 1 else values
 
 
+def encode_rpm(specs) -> bytes:
+    """Body van een ReadPropertyMultiple-request.
+
+    ``specs`` is een lijst ``(object_type, instance, [property, ...])``. De
+    structuur is ``listOfReadAccessSpecs [1]`` met per object een
+    ``ReadAccessSpecification``: ``objectIdentifier [0]`` gevolgd door
+    ``listOfPropertyReferences [1]``.
+    """
+    body = b"\x1e"                                   # listOfReadAccessSpecs open
+    for obj_type, instance, props in specs:
+        body += _ctx(0, _obj_id(obj_type, instance))
+        body += b"\x1e" + b"".join(_ctx(0, _uint_bytes(p)) for p in props) + b"\x1f"
+    return body + b"\x1f"
+
+
+def _parse_rpm_error(buf: bytes, i: int):
+    """Lees Error ::= { errorClass [0], errorCode [1] } vanaf i; → (tekst, index)."""
+    cls, i = _enum_from(buf, i)
+    code, i = _enum_from(buf, i)
+    cls = -1 if cls is None else cls
+    code = -1 if code is None else code
+    cls_name = ERROR_CLASSES.get(cls, f"class {cls}")
+    code_name = ERROR_CODES.get(code, f"code {code}")
+    msg = f"error-class {cls_name}, error-code {code_name}"
+    hint = ERROR_HINTS.get(code_name)
+    return msg + (f" ({hint})" if hint else ""), i
+
+
+def parse_rpm_ack(buf: bytes):
+    """Ontleed een ReadPropertyMultiple-ACK.
+
+    ``buf`` begint bij de servicecode (na de complex-ack-kop). Geeft een lijst
+    ``((type, instance), [(property, waarde, fouttekst), ...])``. Een waarde is
+    ``None`` en de fouttekst gevuld zodra het toestel voor die eigenschap een
+    error-result stuurde — dat is een beslissing per punt, geen verloren pakket,
+    dus de beller herkanst daar niet op.
+    """
+    i = 0
+    # listOfReadAccessResults [0] — opening tag 0 (0x0E).
+    while i < len(buf) and buf[i] != 0x0E:
+        tag, cls, ln, i = _read_tag(buf, i)
+        i += ln
+    if i >= len(buf):
+        raise BacnetError("RPM-antwoord zonder resultaten")
+    i += 1
+    results = []
+    while i < len(buf):
+        if buf[i] == 0x0F:                           # closing tag 0
+            i += 1
+            break
+        tag, cls, ln, i = _read_tag(buf, i)
+        if not (tag == 0 and cls == 1 and ln == 4):
+            raise BacnetError("RPM-antwoord onverwacht: geen object-id")
+        oid = int.from_bytes(buf[i:i + 4], "big")
+        i += 4
+        obj = (oid >> 22, oid & 0x3FFFFF)
+        entries = []
+        if i < len(buf) and buf[i] == 0x1E:          # listOfResults [1] open
+            i += 1
+            while i < len(buf) and buf[i] != 0x1F:
+                tag, cls, ln, i = _read_tag(buf, i)
+                if not (tag == 2 and cls == 1):
+                    raise BacnetError("RPM-antwoord onverwacht: geen property-id")
+                prop = int.from_bytes(buf[i:i + ln], "big")
+                i += ln
+                if i >= len(buf) or buf[i] != 0x3E:  # readResult open (tag 3)
+                    raise BacnetError("RPM-antwoord onverwacht: geen readResult")
+                i += 1
+                if i < len(buf) and buf[i] == 0x4E:  # propertyValue open (tag 4)
+                    i += 1
+                    value, i = parse_value(buf, i)
+                    if i < len(buf) and buf[i] == 0x4F:
+                        i += 1
+                    entries.append((prop, value, None))
+                elif i < len(buf) and buf[i] == 0x5E:  # propertyAccessError (tag 5)
+                    i += 1
+                    text, i = _parse_rpm_error(buf, i)
+                    if i < len(buf) and buf[i] == 0x5F:
+                        i += 1
+                    entries.append((prop, None, text))
+                else:
+                    raise BacnetError("RPM-antwoord onverwacht: geen readResult-waarde")
+                if i < len(buf) and buf[i] == 0x3F:
+                    i += 1
+            if i < len(buf) and buf[i] == 0x1F:
+                i += 1
+        results.append((obj, entries))
+    return results
+
+
 # --------------------------------------------------------------------------- EDE
 PROP_DESCRIPTION = 28
 PROP_NOTIFICATION_CLASS = 17
@@ -616,6 +714,11 @@ class BacnetClient:
         self.last_objects_complete = True
         self.last_objects_warning = ""
         self.last_objects_missing: list[int] = []
+        # ReadPropertyMultiple: zodra een toestel 0x0E met error/reject/abort
+        # weigert, blijven we voor de rest van deze client losse leesacties doen.
+        self.rpm_supported = True
+        # Zette de laatste read_points() het werk stil omdat de deadline viel?
+        self.last_points_partial = False
 
     def close(self) -> None:
         try:
@@ -989,6 +1092,179 @@ class BacnetClient:
                                what=what, port=port)
         return parse_ack(rest)
 
+    def read_property_multiple(self, ip: str, specs, timeout: float | None = None,
+                               attempts: int = 2, port: int = BACNET_PORT) -> dict:
+        """ReadPropertyMultiple (0x0E) voor één blok; → {(type, inst): entries}.
+
+        ``attempts=2``: een verloren UDP-antwoord (timeout) wordt één keer
+        herkanst. Een error/reject/abort is definitief en komt meteen terug —
+        ``_confirmed`` gooit die zonder retry.
+        """
+        body = encode_rpm(specs)
+        what = f"lezen {len(specs)} objecten (RPM)"
+        rest = self._confirmed(ip, SERVICE_RPM, body, timeout, attempts=attempts,
+                               what=what, port=port)
+        return {obj: entries for obj, entries in parse_rpm_ack(rest)}
+
+    @staticmethod
+    def _rpm_split_error(exc: Exception) -> bool:
+        """Is dit een 'antwoord te groot'-fout waar een kleiner blok op helpt?"""
+        text = str(exc).lower()
+        return ("segmentation-not-supported" in text or "apdu-too-long" in text
+                or "too-long" in text or "buffer-overflow" in text)
+
+    @staticmethod
+    def _empty_point() -> dict:
+        return {"name": "", "value": None, "unit": None, "description": None,
+                "error": None, "value_read": False}
+
+    @staticmethod
+    def _apply_rpm_entries(item: dict, entries, obj_type: int,
+                           include_description: bool) -> None:
+        """Vul één punt uit de per-property resultaten van een RPM-antwoord.
+
+        Een error-result op object-name/description/units is geen fout op de
+        kaart (niet elk object heeft die eigenschap); een error-result op
+        present-value is dat wél — dat punt is onleesbaar en krijgt de tekst.
+        """
+        all_errored = bool(entries)
+        for prop, value, err in entries:
+            if err is None:
+                all_errored = False
+            if prop == PROP_OBJECT_NAME and err is None:
+                item["name"] = str(value if value is not None else "").replace("\x00", "").strip()
+            elif prop == PROP_DESCRIPTION and err is None and include_description:
+                item["description"] = str(value if value is not None else "").replace("\x00", "").strip()
+            elif prop == PROP_PRESENT_VALUE:
+                if err is not None:
+                    item["error"] = err
+                else:
+                    item["value"] = value
+                    item["value_read"] = True
+            elif prop == PROP_UNITS and err is None:
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    item["unit"] = int(value)
+        if all_errored and item["error"] is None and obj_type in PV_OBJECT_TYPES:
+            item["error"] = entries[0][2]
+
+    def _loose_points(self, ip: str, keys, include_description: bool,
+                      timeout: float | None, deadline: float | None,
+                      port: int) -> dict:
+        """Terugvalpad: dezelfde velden, maar per eigenschap een ReadProperty."""
+        out: dict = {}
+        for key in keys:
+            if deadline is not None and time.time() >= deadline:
+                self.last_points_partial = True
+                for rest in keys:
+                    out.setdefault(rest, self._empty_point())
+                break
+            obj_type, inst = key
+            item = self._empty_point()
+            try:
+                name = self.read_property(ip, obj_type, inst, PROP_OBJECT_NAME,
+                                          timeout=timeout, port=port)
+                item["name"] = str(name if name is not None else "").replace("\x00", "").strip()
+            except BacnetError:
+                pass
+            if include_description:
+                try:
+                    desc = self.read_property(ip, obj_type, inst, PROP_DESCRIPTION,
+                                              timeout=timeout, port=port)
+                    item["description"] = str(desc if desc is not None else "").replace("\x00", "").strip()
+                except BacnetError:
+                    pass
+            if obj_type in PV_OBJECT_TYPES:
+                try:
+                    value = self.read_property(ip, obj_type, inst, PROP_PRESENT_VALUE,
+                                               timeout=timeout, port=port)
+                    item["value"] = value
+                    item["value_read"] = True
+                except BacnetError as exc:
+                    item["error"] = str(exc)
+            if obj_type in (0, 1, 2):
+                try:
+                    unit = self.read_property(ip, obj_type, inst, PROP_UNITS,
+                                              timeout=timeout, port=port)
+                    if isinstance(unit, (int, float)) and not isinstance(unit, bool):
+                        item["unit"] = int(unit)
+                except BacnetError:
+                    pass
+            out[key] = item
+        return out
+
+    def read_points(self, ip: str, objects, include_description: bool = False,
+                    timeout: float | None = None, deadline: float | None = None,
+                    port: int = BACNET_PORT) -> dict:
+        """Lees naam/waarde/unit (en optioneel description) voor veel objecten.
+
+        ``objects`` is een lijst ``(type, instance)``. In blokken van
+        ``RPM_BLOCK`` gaat het via ReadPropertyMultiple; weigert het toestel die
+        service (error/reject/abort) of wordt het antwoord te groot, dan valt de
+        rest van de lijst terug op losse leesacties. Een deadline stopt het werk
+        eerlijk: ``last_points_partial`` zegt dan dat er punten ontbreken.
+        """
+        self.last_points_partial = False
+        keys = [(int(t), int(i)) for t, i in objects]
+        out: dict = {}
+        block = RPM_BLOCK
+        idx = 0
+        while idx < len(keys):
+            if deadline is not None and time.time() >= deadline:
+                self.last_points_partial = True
+                for key in keys[idx:]:
+                    out.setdefault(key, self._empty_point())
+                break
+            per_request = max(0.05, min(timeout or self.timeout,
+                                        deadline - time.time() if deadline else 10**9))
+            if not self.rpm_supported:
+                chunk = keys[idx:idx + block]
+                out.update(self._loose_points(ip, chunk, include_description,
+                                              per_request, deadline, port))
+                idx += len(chunk)
+                continue
+            chunk = keys[idx:idx + block]
+            specs = []
+            for obj_type, inst in chunk:
+                props = [PROP_OBJECT_NAME]
+                if include_description:
+                    props.append(PROP_DESCRIPTION)
+                if obj_type in PV_OBJECT_TYPES:
+                    props.append(PROP_PRESENT_VALUE)
+                if obj_type in (0, 1, 2):
+                    props.append(PROP_UNITS)
+                specs.append((obj_type, inst, props))
+            try:
+                results = self.read_property_multiple(ip, specs, timeout=per_request,
+                                                      port=port)
+            except BacnetServerError as exc:
+                if self._rpm_split_error(exc) and len(chunk) > 1:
+                    block = max(1, len(chunk) // 2)      # halveer en probeer opnieuw
+                    continue
+                # Error/reject/abort: het toestel wil dit niet. Alle volgende
+                # blokken gaan los — correctheid boven snelheid.
+                self.rpm_supported = False
+                out.update(self._loose_points(ip, chunk, include_description,
+                                              per_request, deadline, port))
+                idx += len(chunk)
+                continue
+            except BacnetTimeout:
+                # Ook na de herkansing niets: lees dit blok los, zodat één
+                # verloren antwoord geen 32 punten kost.
+                out.update(self._loose_points(ip, chunk, include_description,
+                                              per_request, deadline, port))
+                idx += len(chunk)
+                continue
+            for key in chunk:
+                item = self._empty_point()
+                entries = results.get(key)
+                if entries:
+                    self._apply_rpm_entries(item, entries, key[0], include_description)
+                else:                                  # toestel sloeg dit object over
+                    item["error"] = "geen resultaat in RPM-antwoord"
+                out[key] = item
+            idx += len(chunk)
+        return out
+
     def write_property(self, ip: str, obj_type: int, instance: int, prop: int, value) -> None:
         if isinstance(value, bool):
             enc = _app_bool(value)
@@ -1103,6 +1379,17 @@ class BacnetClient:
         if max_points and max_points > 0:
             objs = objs[:max_points]
 
+        # Naam/description/present-value/units in blokken van 32 via RPM. De
+        # notification-class en state-text blijven losse leesacties: die zijn
+        # niet voor elk object zinvol en horen niet in het snelle pad.
+        pairs = [(o["type"], o["inst"]) for o in objs]
+        details = self.read_points(ip, pairs, include_description=True,
+                                   deadline=deadline)
+        if self.last_points_partial:
+            raise BacnetError(
+                f"tijdsbudget bereikt tijdens EDE-export: {len(details) - sum(1 for d in details.values() if d['value_read'] or d['name'])}"
+                f" van {len(objs)} objecten onvolledig")
+
         try:
             dev_name = _ede_clean(self.read_property(ip, 8, device, PROP_OBJECT_NAME))
         except BacnetError:
@@ -1120,26 +1407,13 @@ class BacnetClient:
                     f"tijdsbudget bereikt tijdens EDE-export: {len(rows)} van "
                     f"{len(objs)} objecten verwerkt")
             t, inst = o["type"], o["inst"]
-            name = ""
-            desc = ""
-            unit = None
+            detail = details.get((t, inst)) or {}
+            name = _ede_clean(detail.get("name"))
+            desc = _ede_clean(detail.get("description"))
+            unit = detail.get("unit")
+            if unit is not None:
+                units_used.add(int(unit))
             nc = None
-            try:
-                name = _ede_clean(self.read_property(ip, t, inst, PROP_OBJECT_NAME))
-            except BacnetError:
-                pass
-            try:
-                desc = _ede_clean(self.read_property(ip, t, inst, PROP_DESCRIPTION))
-            except BacnetError:
-                pass
-            if t in (0, 1, 2):
-                try:
-                    u = self.read_property(ip, t, inst, PROP_UNITS)
-                    if isinstance(u, (int, float)) and not isinstance(u, bool):
-                        unit = int(u)
-                        units_used.add(unit)
-                except BacnetError:
-                    pass
             try:
                 value = self.read_property(ip, t, inst, PROP_NOTIFICATION_CLASS)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1216,6 +1490,14 @@ class BacnetClient:
                                             "object-list onvolledig"))
         if max_points and max_points > 0:
             objs = objs[:max_points]
+        # Zelfde blokpad als de puntenlijst; description hoort bij de export.
+        pairs = [(o["type"], o["inst"]) for o in objs]
+        details = self.read_points(ip, pairs, include_description=True,
+                                   deadline=deadline)
+        if self.last_points_partial:
+            raise BacnetError(
+                f"tijdsbudget bereikt tijdens EDE-export: {len(pairs)} van "
+                f"{len(objs)} objecten gevraagd, lijst onvolledig")
         rows = []
         for obj in objs:
             if deadline is not None and time.time() >= deadline:
@@ -1223,31 +1505,18 @@ class BacnetClient:
                     f"tijdsbudget bereikt tijdens EDE-export: {len(rows)} van "
                     f"{len(objs)} objecten verwerkt")
             t, inst = obj["type"], obj["inst"]
+            detail = details.get((t, inst)) or {}
             row = {"ObjectType": obj["abbr"], "ObjectInstance": inst,
-                   "ObjectName": "", "Description": "", "PresentValue": "",
-                   "Units": ""}
-            try:
-                row["ObjectName"] = self.read_property(ip, t, inst, PROP_OBJECT_NAME, timeout=1.0) or ""
-            except BacnetError:
-                pass
-            try:
-                row["Description"] = self.read_property(ip, t, inst, PROP_DESCRIPTION, timeout=1.0) or ""
-            except BacnetError:
-                pass
-            try:
-                pv = self.read_property(ip, t, inst, PROP_PRESENT_VALUE, timeout=1.0)
-                row["PresentValue"] = "" if pv is None else (round(pv, 3) if isinstance(pv, float) else pv)
-            except BacnetError:
-                pass
-            if t in (0, 1, 2):
-                try:
-                    unit = self.read_property(ip, t, inst, PROP_UNITS, timeout=1.0)
-                    if isinstance(unit, (int, float)) and not isinstance(unit, bool):
-                        name = UNITS.get(int(unit), f"unit-{int(unit)}")
-                        row["Units"] = UNIT_SYMBOLS.get(name, name)
-                    else:
-                        row["Units"] = ""
-                except BacnetError:
-                    pass
+                   "ObjectName": detail.get("name") or "",
+                   "Description": detail.get("description") or "",
+                   "PresentValue": "", "Units": ""}
+            if detail.get("value_read"):
+                pv = detail.get("value")
+                row["PresentValue"] = "" if pv is None else (
+                    round(pv, 3) if isinstance(pv, float) else pv)
+            unit = detail.get("unit")
+            if isinstance(unit, (int, float)) and not isinstance(unit, bool):
+                name = UNITS.get(int(unit), f"unit-{int(unit)}")
+                row["Units"] = UNIT_SYMBOLS.get(name, name)
             rows.append(row)
         return rows
