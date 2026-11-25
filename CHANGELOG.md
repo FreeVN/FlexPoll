@@ -13,6 +13,25 @@ voor de UI, `python3 app.py --version` en de git-tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- **BACnet-toestellen met meer dan 300 punten gaven er maar 80, en de
+  EDE-export had soms kuren.** Drie oorzaken. Ten eerste stond er een harde
+  limiet van 80 in `bn_points` en in de HTTP-handler (en 400/200 in de
+  EDE-export): de puntenlijst stopte na 80 rijen — gemeten 80 punten in 11,8 s —
+  terwijl het toestel er 331 had, en de EDE-export was 34 s bezig voor 330
+  punten. Ten tweede werd de object-list bij de eerste leesfout stil afgekapt:
+  de teller zei 331, de lijst leverde 330, zonder enige melding. Ten derde kostte
+  elk verloren UDP-antwoord een punt, want er werd per leesactie niet herkanst.
+  Nu is er geen plafond meer (`limit` 0 of weggelaten betekent alles, `limit` > 0
+  pagineert met `offset`), wordt een timeout per leesactie herkanst — nooit een
+  error/reject/abort, dat blijft de beslissing van het toestel — en meldt de
+  respons expliciet `complete`, `warning` en `partial` in plaats van een korte
+  lijst als volledig voor te stellen. De EDE-export bouwt pas een pakket na een
+  volledige pakketbouw en geeft bij een fout JSON in plaats van een half
+  zip-bestand. De UI laadt de punten in pagina's van 100 met **meer laden** en
+  een teller op het totaal van het toestel.
+
 ## [1.8.2] — 2026-11-24
 
 ### Fixed
